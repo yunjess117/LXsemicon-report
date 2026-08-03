@@ -5,6 +5,7 @@
 매우 높아(수식·수기 혼재, 일부 기존 오류 존재) 이번 버전에서는 건드리지 않고 그대로 보존한다.
 """
 
+import datetime
 from dataclasses import dataclass, field
 
 from openpyxl.workbook import Workbook
@@ -39,6 +40,15 @@ class RawDataResult:
     stats: dict[str, ChannelMatchStats]
 
 
+TITLE_SIMILARITY_THRESHOLD = 0.5
+
+
+def _title_similarity(a: str, b: str) -> float:
+    import difflib
+
+    return difflib.SequenceMatcher(None, _norm_title(a), _norm_title(b)).ratio()
+
+
 def _norm_title(s: str) -> str:
     return "".join(str(s).split()).lower()
 
@@ -68,6 +78,64 @@ def _find_campaign_fee(campaign_rows: list[tuple[str, float]] | None, title: str
     return None
 
 
+def make_campaign_plan_fee_matcher(plan_rows: list | None, media: str, year: int):
+    """캠페인 플랜에서 '광고 시작일'이 발행일과 같은 항목을 찾아 캠페인비를 돌려주는 매처.
+
+    캠페인 플랜의 주제(제목)는 발행리스트와 표기가 달라(리뉴얼 표시, 의역 등) 제목만으로는
+    매칭이 잘 안 되므로 발행일을 기준으로 삼는다. 같은 날짜에 여러 건이면 그 안에서 제목이
+    가장 비슷한 것을 고르고, 그래도 못 고르면 확인 필요로 남긴다. 한 플랜 항목은 한 번만 쓴다.
+    """
+    rows = [r for r in (plan_rows or []) if r.media == media]
+    by_date: dict[datetime.date, list] = {}
+    for r in rows:
+        d = parse_posted_at_date(r.start)
+        if d is not None:
+            by_date.setdefault(d, []).append(r)
+    used: set[int] = set()
+
+    def match(pub_row, area: str, log: ConfirmLog) -> int | None:
+        md = parse_month_day(pub_row.date_raw)
+        if md is None:
+            return None
+        try:
+            target = datetime.date(year, md[0], md[1])
+        except ValueError:
+            return None
+        candidates = [c for c in by_date.get(target, []) if id(c) not in used]
+        if not candidates:
+            return None
+
+        chosen = candidates[0] if len(candidates) == 1 else None
+        if chosen is None:
+            norm_title = _norm_title(pub_row.title)
+            scored = [
+                (c, len(set(_norm_title(c.topic)) & set(norm_title)))
+                for c in candidates
+            ]
+            scored.sort(key=lambda x: -x[1])
+            if len(scored) > 1 and scored[0][1] == scored[1][1]:
+                log.add(
+                    area, pub_row.title,
+                    f"캠페인 플랜에서 같은 광고 시작일({md[0]}/{md[1]})의 항목이 {len(candidates)}건이라 "
+                    "어느 것인지 특정하지 못해 캠페인비 비움",
+                )
+                return None
+            chosen = scored[0][0]
+
+        used.add(id(chosen))
+        if chosen.budget is None:
+            return None
+        if _norm_title(chosen.topic) != _norm_title(pub_row.title):
+            log.add(
+                area, pub_row.title,
+                f"캠페인 플랜의 광고 시작일({md[0]}/{md[1]})이 같아 캠페인비를 가져왔지만 "
+                f"제목 표기가 다릅니다 (플랜: '{chosen.topic}') — 맞는지 확인해주세요",
+            )
+        return roundup_to_10k(chosen.budget)
+
+    return match
+
+
 def build_raw_data(
     prev_wb: Workbook,
     target_year: int,
@@ -80,6 +148,7 @@ def build_raw_data(
     blog_rows: list | None = None,
     youtube_campaign_rows: list[tuple[str, float]] | None = None,
     instagram_campaign_rows: list[tuple[str, float]] | None = None,
+    campaign_plan_rows: list | None = None,
 ) -> RawDataResult:
     log = ConfirmLog()
     stats: dict[str, ChannelMatchStats] = {c: ChannelMatchStats(channel=c) for c in SHEET_NAMES}
@@ -94,10 +163,12 @@ def build_raw_data(
     _build_youtube(
         prev_wb, target_year, target_month, by_channel["유튜브"], youtube_studio_rows,
         youtube_campaign_rows, log, stats["유튜브"],
+        make_campaign_plan_fee_matcher(campaign_plan_rows, "유튜브", target_year),
     )
     _build_instagram(
         prev_wb, target_year, target_month, by_channel["인스타그램"], instagram_rows,
         instagram_campaign_rows, log, stats["인스타그램"],
+        make_campaign_plan_fee_matcher(campaign_plan_rows, "인스타그램", target_year),
     )
     _build_facebook(prev_wb, target_year, target_month, by_channel["페이스북"], facebook_rows, log, stats["페이스북"])
 
@@ -195,7 +266,7 @@ def _build_blog(prev_wb, year, month, publish_rows, blog_rows, log, stat):
         _append_generic(ws, new_rows)
 
 
-def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_rows, log, stat):
+def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_rows, log, stat, plan_fee_matcher=None):
     ws = prev_wb[SHEET_NAMES["유튜브"]]
     if studio_rows is None:
         log.add("취합/유튜브_Raw Data", "전체", "유튜브 스튜디오 원본이 없어 당월 발행분을 판별할 수 없음")
@@ -250,10 +321,10 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
         duration_slot = hms_string_to_hmm_slot(perf.avg_view_duration)
 
         fee = _find_campaign_fee(campaign_rows, row.title)
-        if fee is None and campaign_rows is not None:
-            log.add("취합/유튜브_Raw Data", row.title, "AD 최종본에서 이 콘텐츠와 일치하는 캠페인을 찾지 못해 캠페인비 비움")
-        elif campaign_rows is None:
-            log.add("취합/유튜브_Raw Data", row.title, "AD 최종본이 없어 캠페인비 비움")
+        if fee is None and plan_fee_matcher is not None:
+            fee = plan_fee_matcher(row, "취합/유튜브_Raw Data", log)
+        if fee is None:
+            log.add("취합/유튜브_Raw Data", row.title, "AD 최종본·캠페인 플랜 어디에서도 캠페인비를 찾지 못해 비움")
 
         new_rows.append(
             {
@@ -276,30 +347,38 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
         _append_generic(ws, new_rows)
 
 
-def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_rows, log, stat):
+def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_rows, log, stat, plan_fee_matcher=None):
     ws = prev_wb[SHEET_NAMES["인스타그램"]]
     publish_rows = _filter_rows_by_month(publish_rows, month, "취합/인스타그램_Raw Data", log)
     stat.total_published = len(publish_rows)
 
     if insta_rows is None:
         log.add("취합/인스타그램_Raw Data", "전체", "인스타그램 성과 원본이 없어 성과를 채울 수 없음")
-    matcher = make_perf_matcher(insta_rows)
+    matched = match_perf_rows(publish_rows, insta_rows, year, "취합/인스타그램_Raw Data", log)
 
     new_rows = []
     for row in publish_rows:
-        perf = matcher(row, "취합/인스타그램_Raw Data", log)
+        perf = matched.get(id(row))
         if perf is not None:
             stat.matched += 1
-        else:
+        elif insta_rows is not None:
+            # 성과 원본이 있는데도 못 찾으면, 발행리스트에 연도 표기가 없어 섞여 있는
+            # 작년 동월 콘텐츠일 가능성이 높으므로 이번 달 발행분으로 보지 않고 제외한다.
             stat.unmatched_titles.append(row.title)
-            if insta_rows is not None:
-                log.add("취합/인스타그램_Raw Data", row.title, "발행일이 일치하는 성과 원본을 찾지 못해 성과 지표를 비움")
+            log.add(
+                "취합/인스타그램_Raw Data", row.title,
+                "발행일이 일치하는 성과 원본을 찾지 못해 이번 달 발행분으로 보지 않고 제외함"
+                "(작년 동월 콘텐츠일 수 있음)",
+            )
+            continue
 
         fee = _find_campaign_fee(campaign_rows, row.title)
+        if fee is None and plan_fee_matcher is not None:
+            fee = plan_fee_matcher(row, "취합/인스타그램_Raw Data", log)
         if fee is None:
             log.add(
                 "취합/인스타그램_Raw Data", row.title,
-                "AD 최종본이 없거나 일치하는 캠페인을 찾지 못해 캠페인비 비움" if campaign_rows is not None else "AD 최종본이 없어 캠페인비 비움",
+                "AD 최종본·캠페인 플랜 어디에서도 캠페인비를 찾지 못해 비움",
             )
 
         new_rows.append(
@@ -345,17 +424,23 @@ def _build_facebook(prev_wb, year, month, publish_rows, fb_rows, log, stat):
 
     if fb_rows is None:
         log.add("취합/페이스북_Raw Data", "전체", "페이스북 성과 원본이 없어 성과를 채울 수 없음")
-    matcher = make_perf_matcher(fb_rows)
+    matched = match_perf_rows(publish_rows, fb_rows, year, "취합/페이스북_Raw Data", log)
 
     new_rows = []
     for row in publish_rows:
-        perf = matcher(row, "취합/페이스북_Raw Data", log)
+        perf = matched.get(id(row))
         if perf is not None:
             stat.matched += 1
-        else:
+        elif fb_rows is not None:
+            # 성과 원본이 있는데도 못 찾으면, 발행리스트에 연도 표기가 없어 섞여 있는
+            # 작년 동월 콘텐츠일 가능성이 높으므로 이번 달 발행분으로 보지 않고 제외한다.
             stat.unmatched_titles.append(row.title)
-            if fb_rows is not None:
-                log.add("취합/페이스북_Raw Data", row.title, "발행일이 일치하는 성과 원본을 찾지 못해 성과 지표를 비움")
+            log.add(
+                "취합/페이스북_Raw Data", row.title,
+                "발행일이 일치하는 성과 원본을 찾지 못해 이번 달 발행분으로 보지 않고 제외함"
+                "(작년 동월 콘텐츠일 수 있음)",
+            )
+            continue
 
         new_rows.append(
             {
@@ -383,53 +468,121 @@ def _or_confirm(value):
     return value if value is not None else CONFIRM_LABEL
 
 
-def _build_date_index(perf_rows: list) -> dict[tuple[int, int], list]:
-    idx: dict[tuple[int, int], list] = {}
+def _build_date_index(perf_rows: list) -> dict[datetime.date, list]:
+    idx: dict[datetime.date, list] = {}
     for r in perf_rows:
-        md = parse_month_day(getattr(r, "posted_at", None))
-        if md is not None:
-            idx.setdefault(md, []).append(r)
+        d = parse_posted_at_date(getattr(r, "posted_at", None))
+        if d is not None:
+            idx.setdefault(d, []).append(r)
     return idx
 
 
-def make_perf_matcher(perf_rows: list | None):
-    """발행리스트 행에 대해 성과 원본을 찾아주는 매처를 만든다.
+def match_perf_rows(
+    publish_rows: list, perf_rows: list | None, year: int, area: str, log: ConfirmLog,
+    date_tolerance_days: int = 1,
+) -> dict[int, object]:
+    """발행리스트 행들에 성과 원본을 한꺼번에 매칭해 {id(발행행): 성과행} 을 돌려준다.
 
-    매칭은 발행일을 1순위로 쓴다(제목이 의역·리뉴얼 표시 등으로 성과 원본과 정확히 다를 수
-    있어서). 같은 날짜에 후보가 둘 이상이면 그 안에서 제목으로 좁힌다. 발행일로 후보를 못
-    찾으면(성과 원본에 게시 시각이 없는 경우 등) 마지막으로 제목 매칭을 시도한다.
-    한 성과 원본 행은 한 번만 쓰도록(같은 데이터를 두 발행 행이 나눠 가지지 않도록) 소비 처리한다.
+    발행일이 정확히 같은 것을 먼저 전부 배정한 뒤에, 남은 행들만 ±1일 허용으로 재시도한다
+    (메타 성과 데이터는 태평양시 기준이라 하루 오차가 날 수 있음). 이 순서가 중요한 이유는,
+    발행리스트에 연도 표기가 없어 작년 동월 콘텐츠가 섞여 있는데 한 행씩 순서대로 ±1일을
+    적용하면 작년 행이 올해 행의 데이터를 먼저 가로채기 때문이다.
+
+    같은 날짜에 후보가 둘 이상이면 제목으로 좁히고, 그래도 안 되면 매칭하지 않는다.
+    한 성과 원본 행은 한 번만 배정된다.
     """
     perf_rows = perf_rows or []
     by_title = {_norm_title(r.title): r for r in perf_rows}
     by_date = _build_date_index(perf_rows)
     used: set[int] = set()
+    result: dict[int, object] = {}
 
-    def match(row, area: str, log: ConfirmLog):
+    def center_of(row):
         md = parse_month_day(row.date_raw)
-        candidates = [c for c in by_date.get(md, []) if id(c) not in used] if md else []
-        perf = None
-        if len(candidates) == 1:
-            perf = candidates[0]
-        elif len(candidates) > 1:
-            title_matches = [c for c in candidates if _norm_title(c.title) == _norm_title(row.title)]
-            if len(title_matches) == 1:
-                perf = title_matches[0]
-            else:
-                log.add(
-                    area, row.title,
-                    f"발행일({md[0]}/{md[1]})에 성과 원본 후보가 {len(candidates)}건이라 "
-                    "제목으로도 특정하지 못해 매칭하지 않음",
-                )
-        if perf is None and not candidates:
-            cand = by_title.get(_norm_title(row.title))
-            if cand is not None and id(cand) not in used:
-                perf = cand
+        if md is None:
+            return None
+        try:
+            return datetime.date(year, md[0], md[1])
+        except ValueError:
+            return None
+
+    def pick(row, candidates, tolerance_note: bool):
+        """날짜가 맞는 후보 중에서 고른다. 발행리스트에는 연도 표기가 없어 작년 동월 콘텐츠가
+        섞여 있으므로, 날짜만 같고 제목이 전혀 다른 것은 배정하지 않는다(작년 행이 올해 데이터를
+        가로채는 것을 막기 위함). 제목 표기가 조금 달라도(공백/리뉴얼 표시 등) 충분히 비슷하면 허용."""
+        similar = [c for c in candidates if _title_similarity(c.title, row.title) >= TITLE_SIMILARITY_THRESHOLD]
+        if not similar:
+            return None
+        if len(similar) == 1:
+            return similar[0]
+        exact = [c for c in similar if _norm_title(c.title) == _norm_title(row.title)]
+        if len(exact) == 1:
+            return exact[0]
+        if tolerance_note:
+            log.add(
+                area, row.title,
+                f"발행일 근처에 제목이 비슷한 성과 원본 후보가 {len(similar)}건이라 특정하지 못해 매칭하지 않음",
+            )
+        return None
+
+    # 1단계: 발행일이 정확히 일치하고 제목까지 같은 것부터 배정한다.
+    # (제목까지 보는 이유: 같은 날 발행된 콘텐츠가 둘인데 한쪽이 성과 원본에서는 하루 전으로
+    #  잡혀 있으면, 제목을 안 보고 배정할 경우 두 콘텐츠의 데이터가 서로 뒤바뀐다.)
+    for row in publish_rows:
+        center = center_of(row)
+        if center is None:
+            continue
+        exact = [
+            c for c in by_date.get(center, [])
+            if id(c) not in used and _norm_title(c.title) == _norm_title(row.title)
+        ]
+        if len(exact) == 1:
+            used.add(id(exact[0]))
+            result[id(row)] = exact[0]
+
+    # 2단계: 발행일만 정확히 일치하는 것(제목은 달라도 됨)
+    for row in publish_rows:
+        if id(row) in result:
+            continue
+        center = center_of(row)
+        if center is None:
+            continue
+        candidates = [c for c in by_date.get(center, []) if id(c) not in used]
+        perf = pick(row, candidates, tolerance_note=False)
         if perf is not None:
             used.add(id(perf))
-        return perf
+            result[id(row)] = perf
 
-    return match
+    # 3단계: 남은 행만 ±N일 허용
+    for row in publish_rows:
+        if id(row) in result:
+            continue
+        center = center_of(row)
+        if center is None:
+            continue
+        candidates, seen = [], set()
+        for delta in range(-date_tolerance_days, date_tolerance_days + 1):
+            if delta == 0:
+                continue
+            for c in by_date.get(center + datetime.timedelta(days=delta), []):
+                if id(c) not in used and id(c) not in seen:
+                    candidates.append(c)
+                    seen.add(id(c))
+        perf = pick(row, candidates, tolerance_note=True)
+        if perf is not None:
+            used.add(id(perf))
+            result[id(row)] = perf
+
+    # 4단계: 날짜로 전혀 못 찾은 행은 제목으로만 시도(성과 원본에 게시 시각이 없는 경우 등)
+    for row in publish_rows:
+        if id(row) in result:
+            continue
+        cand = by_title.get(_norm_title(row.title))
+        if cand is not None and id(cand) not in used:
+            used.add(id(cand))
+            result[id(row)] = cand
+
+    return result
 
 
 def _publish_date_str(row, perf, year: int) -> str:

@@ -76,22 +76,15 @@ def fill_daily_followers(
             continue
         fn_by_date[d] = date_cell.row
 
+    # 이번 달 말일까지의 데이터를 전부 그대로 옮긴다(이전 달이 비어 있었어도 함께 채워진다).
+    if target_month == 12:
+        month_end = datetime.date(target_year, 12, 31)
+    else:
+        month_end = datetime.date(target_year, target_month + 1, 1) - datetime.timedelta(days=1)
+
     filled = 0
-    last_good: dict[str, tuple[int, object]] = {}  # 열문자 -> (행, 값) 마지막으로 채워진 값(증감 계산용)
-
-    # fn 로그에서 이번 달 이전 마지막 실측값을 증감 기준으로 미리 확보
-    sorted_fn_dates = sorted(fn_by_date)
-    for d in sorted_fn_dates:
-        if d.year == target_year and d.month == target_month:
-            break
-        r = fn_by_date[d]
-        for vcol in VALUE_COLS:
-            val = fn_ws.cell(row=r, column=_col(vcol)).value
-            if isinstance(val, (int, float)):
-                last_good[vcol] = (r, val)
-
     for d in sorted(daily_by_date):
-        if d.year != target_year or d.month != target_month:
+        if d > month_end:
             continue
         src_row = daily_by_date[d]
         dst_row = fn_by_date.get(d)
@@ -104,26 +97,13 @@ def fill_daily_followers(
 
         any_value = False
         for vcol in VALUE_COLS:
-            src_val = daily_ws.cell(row=src_row, column=_col(vcol)).value
-            if src_val in (None, ""):
-                continue
-            if src_val == "-":
-                fn_ws.cell(row=dst_row, column=_col(vcol)).value = "-"
-                fn_ws.cell(row=dst_row, column=_col(DIFF_COLS[vcol])).value = "-"
-                continue
-            any_value = True
-            fn_ws.cell(row=dst_row, column=_col(vcol)).value = src_val
-
-            diff_col = DIFF_COLS[vcol]
-            if vcol in last_good and isinstance(src_val, (int, float)):
-                prev_row, prev_val = last_good[vcol]
-                if isinstance(prev_val, (int, float)):
-                    fn_ws.cell(row=dst_row, column=_col(diff_col)).value = (
-                        f"={vcol}{dst_row}-{vcol}{prev_row}"
-                    )
-                last_good[vcol] = (dst_row, src_val)
-            elif isinstance(src_val, (int, float)):
-                last_good[vcol] = (dst_row, src_val)
+            for col in (vcol, DIFF_COLS[vcol]):
+                src_val = daily_ws.cell(row=src_row, column=_col(col)).value
+                if src_val in (None, ""):
+                    continue
+                fn_ws.cell(row=dst_row, column=_col(col)).value = src_val
+                if col == vcol and src_val != "-":
+                    any_value = True
 
         if any_value:
             filled += 1
@@ -131,7 +111,7 @@ def fill_daily_followers(
     if filled == 0:
         log.add(
             "취합/채널 팔로워", "전체",
-            "Daily data 파일에서 이번 달에 해당하는 실측값을 찾지 못함",
+            "Daily data 파일에서 이번 달 말일까지의 실측값을 찾지 못함",
         )
 
     log.add(

@@ -92,6 +92,7 @@ with tab1:
         blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx", "csv"])
         ad_fn_file = st.file_uploader("(선택) 이번 달 로우데이터 AD 최종본 — 캠페인비 매칭용", type=["xlsx"])
         daily_follower_file = st.file_uploader("(선택) 채널별 팔로워/구독자 Daily data", type=["xlsx"])
+        plan_file_raw = st.file_uploader("(선택) 이번 달 캠페인 플랜 — 캠페인비 매칭용", type=["xlsx"], key="raw_plan")
 
     required_missing = []
     if prev_fn_file is None:
@@ -108,6 +109,7 @@ with tab1:
         ("블로그 실적 원본", blog_file),
         ("이번 달 AD 최종본", ad_fn_file),
         ("채널별 팔로워/구독자 Daily data", daily_follower_file),
+        ("이번 달 캠페인 플랜", plan_file_raw),
     ]:
         if f is None:
             optional_missing.append(label)
@@ -172,6 +174,13 @@ with tab1:
             except Exception as e:
                 st.warning(f"AD 최종본을 읽는 중 오류가 발생해 캠페인비 매칭을 건너뜁니다: {e}")
 
+        raw_plan_rows = None
+        if plan_file_raw is not None:
+            try:
+                raw_plan_rows = parse_campaign_plan(plan_file_raw, sheet_name=f"{int(target_month)}월")
+            except ParseError as e:
+                st.warning(f"캠페인 플랜 파싱 실패 — 캠페인비는 '확인 필요'로 남깁니다: {e}")
+
         try:
             result = build_raw_data(
                 prev_wb=prev_wb,
@@ -185,6 +194,7 @@ with tab1:
                 blog_rows=blog_rows,
                 youtube_campaign_rows=yt_campaign_rows,
                 instagram_campaign_rows=insta_campaign_rows,
+                campaign_plan_rows=raw_plan_rows,
             )
         except Exception as e:
             st.error(f"처리 중 오류가 발생했습니다: {e}")
