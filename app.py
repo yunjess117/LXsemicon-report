@@ -33,52 +33,94 @@ from core.raw_data import SHEET_NAMES, build_raw_data
 
 st.set_page_config(page_title="LX세미콘 월간 리포트 자동화", page_icon="📊", layout="wide")
 
-BLUE, BLUE_BG = "#3B82F6", "#EFF6FF"
-GREEN, GREEN_BG = "#22C55E", "#F0FDF4"
+BLUE, BLUE_BG = "#3B82F6", "#EFF6FF"       # 전월 로우데이터(취합) 최종본
+PURPLE, PURPLE_BG = "#A855F7", "#FAF5FF"   # 전월 로우데이터 AD 최종본
+AMBER, AMBER_BG = "#F59E0B", "#FFFBEB"     # 이번 달 입력 데이터
+GREEN, GREEN_BG = "#22C55E", "#F0FDF4"     # 콘텐츠 성과
+ORANGE, ORANGE_BG = "#F97316", "#FFF7ED"   # 광고 데이터
 MUTED = "#94A3B8"
+
+PANELS = {
+    "prev_raw": (BLUE, BLUE_BG),
+    "prev_ad": (PURPLE, PURPLE_BG),
+    "input": (AMBER, AMBER_BG),
+    "content": (GREEN, GREEN_BG),
+    "ads": (ORANGE, ORANGE_BG),
+}
+_panel_css = "\n".join(
+    f".st-key-panel_{k} {{ background: {bg}; border-color: {accent}; }}\n"
+    f".st-key-panel_{k} .panel-heading {{ color: {accent}; border-left-color: {accent}; }}"
+    for k, (accent, bg) in PANELS.items()
+)
+_panel_selectors = ", ".join(f".st-key-panel_{k}" for k in PANELS)
 
 st.markdown(
     f"""
     <style>
-    /* 업로드 영역 좌우 패널 */
-    .st-key-panel_left, .st-key-panel_right {{
-        border-radius: 12px;
-        padding: 1.1rem 1.25rem 0.6rem 1.25rem;
+    /* 업로드 구역 패널 — 구역마다 배경/테두리 색을 다르게 해 경계를 명확히 */
+    {_panel_selectors} {{
+        border-radius: 14px;
+        border-style: solid;
+        border-width: 3px;
+        padding: 1.1rem 1.25rem 0.7rem 1.25rem;
         height: 100%;
     }}
-    .st-key-panel_left  {{ background: {BLUE_BG};  border: 1px solid {BLUE}33; }}
-    .st-key-panel_right {{ background: {GREEN_BG}; border: 1px solid {GREEN}33; }}
+    {_panel_css}
 
     /* 패널 안 소제목 */
     .panel-heading {{
-        font-weight: 700; font-size: 0.95rem; letter-spacing: -0.01em;
-        margin: 0.2rem 0 0.6rem 0; padding-left: 0.55rem;
+        font-weight: 800; font-size: 1rem; letter-spacing: -0.01em;
+        margin: 0.1rem 0 0.75rem 0; padding-left: 0.6rem;
+        border-left: 5px solid;
     }}
-    .panel-heading.blue  {{ color: {BLUE};  border-left: 4px solid {BLUE}; }}
-    .panel-heading.green {{ color: {GREEN}; border-left: 4px solid {GREEN}; }}
-    .panel-heading + .panel-heading {{ margin-top: 1.2rem; }}
-    .panel-gap {{ height: 1.1rem; }}
+    .panel-gap {{ height: 0.9rem; }}
 
-    /* 실행 버튼 (좌: 파랑 / 우: 초록) */
+    /* 실행 버튼 — 화면에서 가장 눈에 띄도록 크게, 알약 모양, 그림자 */
     .st-key-btn_raw button, .st-key-btn_ad button {{
-        width: 100%; color: #fff; border: none; font-weight: 700; padding: 0.6rem 1rem;
+        width: 100%;
+        min-height: 5rem;
+        border: none;
+        border-radius: 999px;
+        color: #fff;
+        transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
     }}
-    .st-key-btn_raw button           {{ background: {BLUE}; }}
-    .st-key-btn_raw button:hover     {{ background: #2563EB; color: #fff; }}
-    .st-key-btn_ad button            {{ background: {GREEN}; }}
-    .st-key-btn_ad button:hover      {{ background: #16A34A; color: #fff; }}
+    .st-key-btn_raw button p, .st-key-btn_ad button p {{
+        font-size: 1.45rem !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+    }}
+    .st-key-btn_raw button {{
+        background: linear-gradient(135deg, #60A5FA 0%, {BLUE} 55%, #2563EB 100%);
+        box-shadow: 0 12px 26px {BLUE}59, 0 2px 6px {BLUE}40;
+    }}
+    .st-key-btn_ad button {{
+        background: linear-gradient(135deg, #C084FC 0%, {PURPLE} 55%, #7E22CE 100%);
+        box-shadow: 0 12px 26px {PURPLE}59, 0 2px 6px {PURPLE}40;
+    }}
+    .st-key-btn_raw button:hover:enabled, .st-key-btn_ad button:hover:enabled {{
+        transform: translateY(-3px);
+        filter: brightness(1.06);
+        color: #fff;
+    }}
+    .st-key-btn_raw button:hover:enabled {{ box-shadow: 0 18px 34px {BLUE}66, 0 3px 8px {BLUE}4D; }}
+    .st-key-btn_ad button:hover:enabled  {{ box-shadow: 0 18px 34px {PURPLE}66, 0 3px 8px {PURPLE}4D; }}
+    .st-key-btn_raw button:active:enabled, .st-key-btn_ad button:active:enabled {{
+        transform: translateY(-1px);
+    }}
     .st-key-btn_raw button:disabled, .st-key-btn_ad button:disabled {{
-        background: {MUTED}66; color: #fff9;
+        background: #E2E8F0; color: {MUTED}; box-shadow: none;
     }}
+    .st-key-btn_raw button:disabled p, .st-key-btn_ad button:disabled p {{ color: {MUTED}; }}
 
     /* 두 버튼 사이 연결 표시 */
     .btn-link {{
         display: flex; align-items: center; justify-content: center;
-        height: 100%; min-height: 2.6rem; color: {MUTED};
+        min-height: 5rem; color: {MUTED};
     }}
-    .btn-link span {{ font-size: 1.15rem; line-height: 1; }}
+    .btn-link span {{ font-size: 1.6rem; line-height: 1; }}
     .btn-link::before, .btn-link::after {{
-        content: ""; flex: 1; height: 1px; background: {MUTED}66; margin: 0 0.35rem;
+        content: ""; flex: 1; height: 2px; background: {MUTED}59; margin: 0 0.4rem;
     }}
     </style>
     """,
@@ -112,11 +154,12 @@ if not check_password():
     st.stop()
 
 
-def heading(text: str, color: str) -> None:
-    st.markdown(f'<div class="panel-heading {color}">{text}</div>', unsafe_allow_html=True)
+def heading(text: str) -> None:
+    """패널 안 소제목. 색은 패널 컨테이너 키에 따라 CSS가 알아서 입힌다."""
+    st.markdown(f'<div class="panel-heading">{text}</div>', unsafe_allow_html=True)
 
 
-def render_result(out: dict, accent: str) -> None:
+def render_result(out: dict) -> None:
     """세션에 저장해둔 처리 결과(요약·확인 필요·다운로드)를 그린다.
     다운로드 버튼을 눌러 rerun이 일어나도 결과가 사라지지 않도록 세션에 담아 렌더한다."""
     st.markdown(f"#### {out['title']}")
@@ -171,29 +214,41 @@ with tab_data:
     st.subheader("입력 파일")
     st.caption("★ 표시는 필수 파일입니다. 선택 파일이 없으면 해당 항목은 '확인 필요'로 비워둡니다.")
 
-    left, right = st.columns(2)
-    with left:
-        with st.container(key="panel_left"):
-            heading("전월 최종본", "blue")
+    top_l, top_r = st.columns(2)
+    with top_l:
+        with st.container(key="panel_prev_raw"):
+            heading("전월 최종본 · 취합")
             prev_fn_file = st.file_uploader("★ 전월 로우데이터(취합) 최종본 (_fn.xlsx)", type=["xlsx"], key="prev_raw_fn")
+            st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
+    with top_r:
+        with st.container(key="panel_prev_ad"):
+            heading("전월 최종본 · AD")
             ad_prev_fn_file = st.file_uploader("★ 전월 로우데이터 AD 최종본 (_fn.xlsx)", type=["xlsx"], key="prev_ad_fn")
+            st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
-            heading("이번 달 입력 데이터", "blue")
+    st.markdown("")
+    bot_l, bot_m, bot_r = st.columns(3)
+    with bot_l:
+        with st.container(key="panel_input"):
+            heading("이번 달 입력 데이터")
             publish_list_file = st.file_uploader("★ 이번 달 콘텐츠 발행리스트", type=["xlsx", "xls"], key="publish_list")
             plan_file = st.file_uploader("이번 달 캠페인 플랜 (캠페인비·집행 기간 매칭용)", type=["xlsx"], key="campaign_plan")
             daily_follower_file = st.file_uploader("(선택) 채널별 팔로워·구독자 Daily data", type=["xlsx"], key="daily_follower")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
-    with right:
-        with st.container(key="panel_right"):
-            heading("콘텐츠 성과", "green")
+    with bot_m:
+        with st.container(key="panel_content"):
+            heading("콘텐츠 성과")
             newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx", "csv"], key="newsroom")
             yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx"], key="youtube")
             insta_file = st.file_uploader("인스타그램 성과 원본 (메타 콘텐츠 인사이트)", type=["xlsx"], key="instagram")
             fb_file = st.file_uploader("페이스북 성과 원본 (페이스북 인사이트 CSV)", type=["csv"], key="facebook")
             blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx", "csv"], key="blog")
+            st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
-            heading("광고 데이터", "green")
+    with bot_r:
+        with st.container(key="panel_ads"):
+            heading("광고 데이터")
             google_file = st.file_uploader("구글애즈 광고 리포트 (CSV, UTF-16)", type=["csv"], key="google_ads")
             meta_file = st.file_uploader("메타 광고 리포트 (참여/도달/동영상조회/트래픽)", type=["xlsx"], key="meta_ads")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
@@ -236,14 +291,14 @@ with tab_data:
     with btn_l:
         with st.container(key="btn_raw"):
             run_raw = st.button(
-                "로우데이터 취합 실행", disabled=bool(raw_missing), key="do_raw", use_container_width=True
+                "📊 로우데이터 취합", disabled=bool(raw_missing), key="do_raw", use_container_width=True
             )
     with btn_mid:
         st.markdown('<div class="btn-link"><span>→</span></div>', unsafe_allow_html=True)
     with btn_r:
         with st.container(key="btn_ad"):
             run_ad = st.button(
-                "AD데이터 취합 실행", disabled=bool(ad_missing), key="do_ad", use_container_width=True
+                "📣 AD 데이터 취합", disabled=bool(ad_missing), key="do_ad", use_container_width=True
             )
 
     warn_l, _, warn_r = st.columns([6, 1, 6])
@@ -429,10 +484,10 @@ with tab_data:
         res_l, res_r = st.columns(2)
         with res_l:
             if st.session_state.get("raw_out"):
-                render_result(st.session_state["raw_out"], BLUE)
+                render_result(st.session_state["raw_out"])
         with res_r:
             if st.session_state.get("ad_out"):
-                render_result(st.session_state["ad_out"], GREEN)
+                render_result(st.session_state["ad_out"])
 
 with tab_ppt:
     col_y3, col_m3 = st.columns(2)
