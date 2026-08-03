@@ -32,28 +32,51 @@ class MonthBlock:
         return self.data_end_row - self.data_start_row + 1
 
 
-def find_month_blocks(ws: Worksheet, header_row: int = 4) -> list[MonthBlock]:
-    """B열을 훑어서 (숫자 데이터행... , '합계', '평균') 블록들을 찾는다."""
+def find_month_blocks(ws: Worksheet, header_row: int = 4, num_col: str = NUM_COL) -> list[MonthBlock]:
+    """번호가 매겨진 데이터행... , '합계', '평균' 순의 블록들을 찾는다.
+
+    콘텐츠 Raw Data 시트는 B열에 NO.가 있고 헤더가 4:5 두 줄이지만, AD 파일 시트는 B열에
+    월 라벨('1월' 등)이 반복되고 NO.는 C열에, 헤더는 4행 한 줄뿐이다. num_col로 '번호' 열을
+    지정하면 두 구조 모두 지원한다. 합계/평균 마커 자체는 항상 B열에 있다고 가정한다
+    (실제 두 파일 모두 그렇다).
+    """
     blocks: list[MonthBlock] = []
-    row = header_row + 2  # 헤더가 보통 4:5 두 줄 병합이므로 그 다음부터 시작
+    marker_idx = column_index_from_string(NUM_COL)
+    num_idx = column_index_from_string(num_col)
     max_row = ws.max_row
+
+    # 헤더가 몇 줄인지 모르더라도, num_col에 숫자가 처음 나오는 행을 찾아 데이터 시작으로 삼는다.
+    row = header_row + 1
     data_start = None
     while row <= max_row + 1:
-        val = ws.cell(row=row, column=column_index_from_string(NUM_COL)).value
+        val = ws.cell(row=row, column=num_idx).value
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            data_start = row
+            break
+        row += 1
+    if data_start is None:
+        return blocks
+
+    row = data_start
+    while row <= max_row + 1:
+        val = ws.cell(row=row, column=num_idx).value
         if isinstance(val, (int, float)) and not isinstance(val, bool):
             if data_start is None:
                 data_start = row
             row += 1
             continue
-        if val == "합계" and data_start is not None:
+        marker_val = ws.cell(row=row, column=marker_idx).value
+        if marker_val == "합계" and data_start is not None:
             total_row = row
             avg_row = row + 1
-            avg_val = ws.cell(row=avg_row, column=column_index_from_string(NUM_COL)).value
-            if avg_val != "평균":
+            avg_val = ws.cell(row=avg_row, column=marker_idx).value
+            if avg_val in (None, ""):
                 raise ValueError(
                     f"{ws.title}: {total_row}행이 '합계'인데 바로 다음 행({avg_row})이 "
-                    f"'평균'이 아니라 {avg_val!r} 입니다. 예상한 블록 구조와 다릅니다."
+                    f"비어 있습니다. 예상한 블록 구조와 다릅니다."
                 )
+            # avg_val이 '평균'이 아닌 경우도 있다(실제 파일에 오타가 있는 사례를 확인함).
+            # 위치(합계 바로 다음 행)만으로 평균 행을 판단하고, 라벨 오타 자체는 문제 삼지 않는다.
             blocks.append(
                 MonthBlock(
                     data_start_row=data_start,
@@ -155,6 +178,17 @@ def verify_formula_consistency(
     return problems
 
 
+def _remap_formula_rows(formula: str, row_map: dict[int, int]) -> str:
+    """수식 안의 행 번호를 row_map에 따라 새 블록의 행 번호로 치환한다.
+    'H6:H17' 같은 범위 참조와 'L44/H44' 같은 (같은 블록의 합계행을 가리키는) 단일 셀
+    참조를 모두 같은 방식으로 처리한다 — 어차피 둘 다 '열문자+행번호' 토큰이기 때문."""
+    if not row_map:
+        return formula
+    keys = sorted(row_map.keys(), key=lambda r: -len(str(r)))
+    pattern = re.compile(r"(?<=[A-Z])(" + "|".join(str(k) for k in keys) + r")(?!\d)")
+    return pattern.sub(lambda m: str(row_map[int(m.group(1))]), formula)
+
+
 def _copy_style(src_cell, dst_cell) -> None:
     if src_cell.has_style:
         dst_cell.font = copy.copy(src_cell.font)
@@ -172,12 +206,17 @@ def append_month_block(
     row_formula_template: dict[str, str],
     summary_template: dict[str, dict[str, str]],
     merge_cols: tuple[str, str] = ("B", "F"),
+    number_col: str = NUM_COL,
 ) -> MonthBlock:
     """prev_block 바로 아래에 새 달 블록을 추가한다.
 
-    new_rows: 각 원소는 {열문자: 값} 딕셔너리. 'B'(번호)는 자동으로 1부터 채워지므로 생략 가능.
+    new_rows: 각 원소는 {열문자: 값} 딕셔너리.
     row_formula_template: extract_row_formula_template() 결과 (데이터 행마다 반복되는 수식 열).
     summary_template: extract_summary_formula_template() 결과 (직전 블록의 합계/평균 수식).
+    number_col: 1,2,3...이 자동으로 채워질 열. 콘텐츠 Raw Data 시트는 'B'(NO.),
+        AD 파일 시트는 'C'(NO., B열은 월 라벨이라 new_rows에서 직접 지정해야 함).
+        number_col이 'B'(=합계/평균 마커 열)가 아니면 자동 채움을 하지 않으므로
+        호출 측이 new_rows에 그 값을 직접 넣어야 한다.
     """
     start_row = prev_block.avg_row + 1
     n = len(new_rows)
@@ -199,7 +238,7 @@ def append_month_block(
             src_cell = ws.cell(row=style_data_row, column=col_idx)
             dst_cell = ws.cell(row=r, column=col_idx)
             _copy_style(src_cell, dst_cell)
-            if col_letter == NUM_COL and NUM_COL not in row_data:
+            if col_letter == number_col and number_col not in row_data:
                 dst_cell.value = i + 1
             elif col_letter in row_formula_template:
                 dst_cell.value = row_formula_template[col_letter].replace("{row}", str(r))
@@ -224,13 +263,15 @@ def append_month_block(
             if tpl is None:
                 continue
             if isinstance(tpl, str) and tpl.startswith("="):
-                # 이전 블록 범위(예: H6:H17)를 새 블록 범위(예: H{start}:H{end})로 치환
-                new_formula = re.sub(
-                    rf"([A-Z]+){prev_block.data_start_row}:([A-Z]+){prev_block.data_end_row}",
-                    lambda m: f"{m.group(1)}{start_row}:{m.group(2)}{data_end_row}",
+                dst_cell.value = _remap_formula_rows(
                     tpl,
+                    {
+                        prev_block.data_start_row: start_row,
+                        prev_block.data_end_row: data_end_row,
+                        prev_block.total_row: total_row,
+                        prev_block.avg_row: avg_row,
+                    },
                 )
-                dst_cell.value = new_formula
             else:
                 dst_cell.value = tpl  # 리터럴 값(예: '-')은 그대로 복제
 

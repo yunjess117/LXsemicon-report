@@ -14,12 +14,16 @@ from io import BytesIO
 import openpyxl
 import streamlit as st
 
+from core.ad_data import build_ad_data
 from core.ad_lookup import extract_campaign_fee_rows
 from core.follower_data import fill_daily_followers
 from core.parsers.base import ParseError
 from core.parsers.blog import parse_blog
+from core.parsers.campaign_plan import parse_campaign_plan
 from core.parsers.facebook import parse_facebook
+from core.parsers.google_ads import parse_google_ads
 from core.parsers.instagram import parse_instagram
+from core.parsers.meta_ads import parse_meta_ads
 from core.parsers.newsroom_ga import parse_newsroom_ga
 from core.parsers.publish_list import parse_publish_list
 from core.parsers.youtube_studio import parse_youtube_studio
@@ -213,7 +217,113 @@ with tab1:
         )
 
 with tab2:
-    st.info("로우데이터 AD 파일 생성 기능은 준비 중입니다.")
+    col_y2, col_m2 = st.columns(2)
+    with col_y2:
+        ad_target_year = st.number_input("이번 리포트 연도 ", min_value=2020, max_value=2100, value=2026, step=1, key="ad_year")
+    with col_m2:
+        ad_target_month = st.number_input("이번 리포트 월 ", min_value=1, max_value=12, value=7, step=1, key="ad_month")
+
+    st.subheader("입력 파일")
+    st.caption("★ 표시는 필수 파일입니다.")
+    c1, c2 = st.columns(2)
+    with c1:
+        ad_prev_fn_file = st.file_uploader("★ 전월 로우데이터 AD 최종본 (_fn.xlsx)", type=["xlsx"], key="ad_prev_fn")
+        ad_publish_list_file = st.file_uploader("★ 이번 달 콘텐츠 발행리스트", type=["xlsx", "xls"], key="ad_publish_list")
+        ad_google_file = st.file_uploader("구글애즈 광고 리포트 (CSV, UTF-16)", type=["csv"], key="ad_google")
+    with c2:
+        ad_meta_file = st.file_uploader("메타 광고 리포트 (참여/도달/동영상조회/트래픽)", type=["xlsx"], key="ad_meta")
+        ad_plan_file = st.file_uploader("이번 달 캠페인 플랜 — 집행 기간 매칭용", type=["xlsx"], key="ad_plan")
+
+    ad_required_missing = []
+    if ad_prev_fn_file is None:
+        ad_required_missing.append("전월 로우데이터 AD 최종본")
+    if ad_publish_list_file is None:
+        ad_required_missing.append("콘텐츠 발행리스트")
+
+    ad_optional_missing = []
+    for label, f in [("구글애즈 광고 리포트", ad_google_file), ("메타 광고 리포트", ad_meta_file), ("캠페인 플랜", ad_plan_file)]:
+        if f is None:
+            ad_optional_missing.append(label)
+    if ad_optional_missing:
+        st.info(
+            "다음 선택 파일이 없습니다 — 해당 시트/항목은 '확인 필요'로 비워둔 채 진행됩니다: "
+            + ", ".join(ad_optional_missing)
+        )
+    st.caption("⚠ 버즈빌_캠페인 시트는 12개월 고정 캘린더 구조라 자동화 대상이 아니며 항상 수기 확인이 필요합니다.")
+
+    ad_process = st.button("처리 시작", type="primary", disabled=bool(ad_required_missing), key="ad_process")
+    if ad_required_missing:
+        st.warning("⚠ 다음 필수 파일이 없어 처리할 수 없습니다: " + ", ".join(ad_required_missing))
+
+    if ad_process:
+        try:
+            ad_prev_wb = openpyxl.load_workbook(ad_prev_fn_file)
+        except Exception as e:
+            st.error(f"전월 로우데이터 AD 최종본을 여는 중 오류: {e}")
+            st.stop()
+
+        try:
+            ad_publish_rows = parse_publish_list(ad_publish_list_file)
+        except ParseError as e:
+            st.error(f"콘텐츠 발행리스트 형식 오류: {e}")
+            st.stop()
+
+        def ad_safe_parse(parser, file, label, **kwargs):
+            if file is None:
+                return None
+            try:
+                return parser(file, **kwargs)
+            except ParseError as e:
+                st.warning(f"{label} 파싱 실패 — 이 파일은 무시하고 '확인 필요'로 남깁니다: {e}")
+                return None
+
+        google_rows = ad_safe_parse(parse_google_ads, ad_google_file, "구글애즈 광고 리포트")
+        meta_rows = ad_safe_parse(parse_meta_ads, ad_meta_file, "메타 광고 리포트")
+        plan_rows = ad_safe_parse(
+            parse_campaign_plan, ad_plan_file, "캠페인 플랜", sheet_name=f"{int(ad_target_month)}월"
+        )
+
+        try:
+            ad_result = build_ad_data(
+                prev_wb=ad_prev_wb,
+                target_year=int(ad_target_year),
+                target_month=int(ad_target_month),
+                publish_rows=ad_publish_rows,
+                google_ads_rows=google_rows,
+                meta_ads_rows=meta_rows,
+                campaign_plan_rows=plan_rows,
+            )
+        except Exception as e:
+            st.error(f"처리 중 오류가 발생했습니다: {e}")
+            st.stop()
+
+        st.success("처리를 완료했습니다.")
+
+        st.subheader("매칭 결과 요약")
+        ad_cols = st.columns(len(ad_result.stats))
+        for col, (sheet, s) in zip(ad_cols, ad_result.stats.items()):
+            with col:
+                st.metric(sheet, f"{s.matched}/{s.total_published}", help="매칭 성공 / 이번 달 캠페인 건수")
+
+        if ad_result.confirm:
+            st.subheader(f"⚠ 확인 필요 항목 ({len(ad_result.confirm)}건)")
+            for area, items in ad_result.confirm.by_area().items():
+                with st.expander(f"{area} ({len(items)}건)"):
+                    for item in items:
+                        st.write(f"- **{item.location}** — {item.reason}")
+        else:
+            st.info("확인이 필요한 항목이 없습니다.")
+
+        ad_buffer = BytesIO()
+        ad_result.workbook.save(ad_buffer)
+        ad_buffer.seek(0)
+        st.download_button(
+            "AD 엑셀 다운로드",
+            data=ad_buffer,
+            file_name=f"_피알원_LX세미콘_월간_리포트_Raw_Data_AD_{int(ad_target_month)}월_fn.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="ad_download",
+        )
 
 with tab3:
     st.info("월간보고서 PPT 생성 기능은 준비 중입니다.")
