@@ -13,7 +13,7 @@ from .confirm import ConfirmLog
 from .excel_block import append_month_block, extract_row_formula_template, extract_summary_formula_template, find_month_blocks
 from .formatters import format_kr_date, hms_string_to_hmm_slot, parse_month_day, parse_posted_at_date, roundup_to_10k, seconds_to_hmm_slot
 from .month_filter import _parse_month_from_kr_date, filter_by_url_band, filter_youtube_by_video_id, get_prev_max_url_id
-from .parsers.base import extract_youtube_video_id
+from .parsers.base import extract_url_id, extract_youtube_video_id
 
 SHEET_NAMES = {
     "뉴스룸": "뉴스룸_Raw Data",
@@ -124,15 +124,21 @@ def _build_newsroom(prev_wb, year, month, publish_rows, ga_rows, log, stat):
 
     if ga_rows is None:
         log.add("취합/뉴스룸_Raw Data", "H열(조회수)", "뉴스룸 콘텐츠별 조회수 원본이 없어 전부 비움")
-        ga_by_url = {}
-        ga_by_title = {}
+        ga_by_id = {}
     else:
-        ga_by_url = {r.key: r.views for r in ga_rows}
-        ga_by_title = {_norm_title(r.key): r.views for r in ga_rows}
+        ga_by_id = {}
+        for r in ga_rows:
+            key = str(r.key).strip()
+            # 프로토콜(https://) 없이 'news.lxsemicon.com/10287'나 '/10287'처럼 올 수도 있어,
+            # URL 형식 전체가 아니라 '/' 뒤에 붙는 숫자(콘텐츠 번호)만 있으면 매칭 대상으로 삼는다.
+            uid = extract_url_id(key, channel="뉴스룸") if "/" in key else None
+            if uid is not None:
+                ga_by_id[uid] = r.views
 
     new_rows = []
     for row in accepted:
-        views = ga_by_url.get(row.url) or ga_by_title.get(_norm_title(row.title))
+        row_uid = extract_url_id(row.url, channel="뉴스룸")
+        views = ga_by_id.get(row_uid) if row_uid is not None else None
         if views is not None:
             stat.matched += 1
         else:
