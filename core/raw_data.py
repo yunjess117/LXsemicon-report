@@ -143,8 +143,8 @@ def _build_newsroom(prev_wb, year, month, publish_rows, ga_rows, log, stat):
                 "D": row.category or _need_category(log, "취합/뉴스룸_Raw Data", row.title),
                 "E": row.title,
                 "F": row.url,
-                "G": row.content_type,
-                "H": views,
+                "G": row.content_type or CONFIRM_LABEL,
+                "H": _or_confirm(views),
             }
         )
     if new_rows:
@@ -179,10 +179,10 @@ def _build_blog(prev_wb, year, month, publish_rows, blog_rows, log, stat):
                 "D": row.category or _need_category(log, "취합/블로그_Raw Data", row.title),
                 "E": row.title,
                 "F": row.url,
-                "G": row.content_type,
-                "H": perf.views if perf else None,
-                "I": perf.likes if perf else None,
-                "J": perf.comments if perf else None,
+                "G": row.content_type or CONFIRM_LABEL,
+                "H": _or_confirm(perf.views if perf else None),
+                "I": _or_confirm(perf.likes if perf else None),
+                "J": _or_confirm(perf.comments if perf else None),
             }
         )
     if new_rows:
@@ -208,13 +208,22 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
         perf = studio_by_id.get(vid)
         if perf is None:
             stat.unmatched_titles.append(row.title)
+            log.add("취합/유튜브_Raw Data", row.title, "video_id는 확인됐지만 스튜디오 원본에서 상세 데이터를 찾지 못해 성과 지표를 비움")
             new_rows.append(
                 {
                     "C": format_kr_date(row.date_raw, year),
                     "D": row.category or _need_category(log, "취합/유튜브_Raw Data", row.title),
                     "E": row.title,
                     "F": row.url,
-                    "G": row.content_type,
+                    "G": row.content_type or CONFIRM_LABEL,
+                    "H": CONFIRM_LABEL,
+                    "I": CONFIRM_LABEL,
+                    "J": CONFIRM_LABEL,
+                    "K": CONFIRM_LABEL,
+                    "L": CONFIRM_LABEL,
+                    "M": CONFIRM_LABEL,
+                    "N": CONFIRM_LABEL,
+                    "O": CONFIRM_LABEL,
                 }
             )
             continue
@@ -246,15 +255,15 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
                 "D": row.category or _need_category(log, "취합/유튜브_Raw Data", row.title),
                 "E": row.title,
                 "F": row.url,
-                "G": row.content_type,
-                "H": fee,
-                "I": perf.views,
-                "J": length_slot,
-                "K": duration_slot,
-                "L": avg_pct,
-                "M": perf.likes,
-                "N": perf.comments,
-                "O": perf.shares,
+                "G": row.content_type or CONFIRM_LABEL,
+                "H": _or_confirm(fee),
+                "I": _or_confirm(perf.views),
+                "J": _or_confirm(length_slot),
+                "K": _or_confirm(duration_slot),
+                "L": _or_confirm(avg_pct),
+                "M": _or_confirm(perf.likes),
+                "N": _or_confirm(perf.comments),
+                "O": _or_confirm(perf.shares),
             }
         )
     if new_rows:
@@ -264,21 +273,21 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
 def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_rows, log, stat):
     ws = prev_wb[SHEET_NAMES["인스타그램"]]
     publish_rows = _filter_rows_by_month(publish_rows, month, "취합/인스타그램_Raw Data", log)
+    stat.total_published = len(publish_rows)
 
     if insta_rows is None:
         log.add("취합/인스타그램_Raw Data", "전체", "인스타그램 성과 원본이 없어 성과를 채울 수 없음")
-        insta_by_title, insta_by_date = {}, {}
-    else:
-        insta_by_title = {_norm_title(r.title): r for r in insta_rows}
-        insta_by_date = _build_date_index(insta_rows, exclude_ids=_title_matched_perf_ids(publish_rows, insta_by_title))
-    stat.total_published = len(publish_rows)
+    matcher = make_perf_matcher(insta_rows)
+
     new_rows = []
     for row in publish_rows:
-        perf, _ = _match_by_title_or_date(row, insta_by_title, insta_by_date, "취합/인스타그램_Raw Data", log)
-        if perf is None:
+        perf = matcher(row, "취합/인스타그램_Raw Data", log)
+        if perf is not None:
+            stat.matched += 1
+        else:
             stat.unmatched_titles.append(row.title)
-            continue  # 성과 원본에 없으면 이번 달 발행분인지 자체가 불확실 -> 교차검증 실패로 스킵
-        stat.matched += 1
+            if insta_rows is not None:
+                log.add("취합/인스타그램_Raw Data", row.title, "발행일이 일치하는 성과 원본을 찾지 못해 성과 지표를 비움")
 
         fee = _find_campaign_fee(campaign_rows, row.title)
         if fee is None:
@@ -292,16 +301,17 @@ def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_ro
                 "C": _publish_date_str(row, perf, year),
                 "D": row.category or _need_category(log, "취합/인스타그램_Raw Data", row.title),
                 "E": row.title,
-                "F": row.url or perf.url,
-                "G": row.content_type,
-                "H": fee,
-                "I": perf.reach,
-                "J": perf.views,
-                # K(프로필 방문)/L(웹 방문): 원본에 없는 수기 항목 - 아래에서 확인 필요 처리
-                "M": perf.likes,
-                "N": perf.comments,
-                "O": perf.saves,
-                "P": perf.shares,
+                "F": row.url or (perf.url if perf else None) or CONFIRM_LABEL,
+                "G": row.content_type or CONFIRM_LABEL,
+                "H": _or_confirm(fee),
+                "I": _or_confirm(perf.reach if perf else None),
+                "J": _or_confirm(perf.views if perf else None),
+                "K": CONFIRM_LABEL,  # 프로필 방문: 원본에 없는 수기 입력 항목
+                "L": CONFIRM_LABEL,  # 웹 방문: 원본에 없는 수기 입력 항목
+                "M": _or_confirm(perf.likes if perf else None),
+                "N": _or_confirm(perf.comments if perf else None),
+                "O": _or_confirm(perf.saves if perf else None),
+                "P": _or_confirm(perf.shares if perf else None),
             }
         )
         log.add(
@@ -325,99 +335,107 @@ def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_ro
 def _build_facebook(prev_wb, year, month, publish_rows, fb_rows, log, stat):
     ws = prev_wb[SHEET_NAMES["페이스북"]]
     publish_rows = _filter_rows_by_month(publish_rows, month, "취합/페이스북_Raw Data", log)
+    stat.total_published = len(publish_rows)
 
     if fb_rows is None:
         log.add("취합/페이스북_Raw Data", "전체", "페이스북 성과 원본이 없어 성과를 채울 수 없음")
-        fb_by_title, fb_by_date = {}, {}
-    else:
-        fb_by_title = {_norm_title(r.title): r for r in fb_rows}
-        fb_by_date = _build_date_index(fb_rows, exclude_ids=_title_matched_perf_ids(publish_rows, fb_by_title))
-    stat.total_published = len(publish_rows)
+    matcher = make_perf_matcher(fb_rows)
+
     new_rows = []
     for row in publish_rows:
-        perf, _ = _match_by_title_or_date(row, fb_by_title, fb_by_date, "취합/페이스북_Raw Data", log)
-        if perf is None:
+        perf = matcher(row, "취합/페이스북_Raw Data", log)
+        if perf is not None:
+            stat.matched += 1
+        else:
             stat.unmatched_titles.append(row.title)
-            continue
-        stat.matched += 1
+            if fb_rows is not None:
+                log.add("취합/페이스북_Raw Data", row.title, "발행일이 일치하는 성과 원본을 찾지 못해 성과 지표를 비움")
+
         new_rows.append(
             {
                 "C": _publish_date_str(row, perf, year),
                 "D": row.category or _need_category(log, "취합/페이스북_Raw Data", row.title),
                 "E": row.title,
-                "F": row.url or perf.url,
-                "G": row.content_type,
+                "F": row.url or (perf.url if perf else None) or CONFIRM_LABEL,
+                "G": row.content_type or CONFIRM_LABEL,
                 "H": "-",  # 페이스북은 광고 집행 시에만 값이 생김 (기본 '-')
-                "I": perf.reach,
-                "J": perf.impressions,
-                "K": perf.likes,
-                "L": perf.comments,
-                "M": perf.shares,
+                "I": _or_confirm(perf.reach if perf else None),
+                "J": _or_confirm(perf.impressions if perf else None),
+                "K": _or_confirm(perf.likes if perf else None),
+                "L": _or_confirm(perf.comments if perf else None),
+                "M": _or_confirm(perf.shares if perf else None),
             }
         )
     if new_rows:
         _append_generic(ws, new_rows)
 
 
-def _build_date_index(perf_rows: list, exclude_ids: set[int] = frozenset()) -> dict[tuple[int, int], list]:
+CONFIRM_LABEL = "⚠ 확인 필요"
+
+
+def _or_confirm(value):
+    return value if value is not None else CONFIRM_LABEL
+
+
+def _build_date_index(perf_rows: list) -> dict[tuple[int, int], list]:
     idx: dict[tuple[int, int], list] = {}
     for r in perf_rows:
-        if id(r) in exclude_ids:
-            continue
         md = parse_month_day(getattr(r, "posted_at", None))
         if md is not None:
             idx.setdefault(md, []).append(r)
     return idx
 
 
-def _title_matched_perf_ids(publish_rows: list, by_title: dict) -> set[int]:
-    """제목으로 이미 매칭될 성과 원본들의 id() 집합. 발행리스트에는 연도 표기가 없어
-    작년 동월 콘텐츠가 섞여 있을 수 있는데, 그런 행이 날짜만 우연히 같은 이번 달 진짜
-    게시물을 가로채 이중 매칭하지 않도록, 날짜 매칭 대상에서 미리 제외한다."""
-    ids = set()
-    for row in publish_rows:
-        perf = by_title.get(_norm_title(row.title))
+def make_perf_matcher(perf_rows: list | None):
+    """발행리스트 행에 대해 성과 원본을 찾아주는 매처를 만든다.
+
+    매칭은 발행일을 1순위로 쓴다(제목이 의역·리뉴얼 표시 등으로 성과 원본과 정확히 다를 수
+    있어서). 같은 날짜에 후보가 둘 이상이면 그 안에서 제목으로 좁힌다. 발행일로 후보를 못
+    찾으면(성과 원본에 게시 시각이 없는 경우 등) 마지막으로 제목 매칭을 시도한다.
+    한 성과 원본 행은 한 번만 쓰도록(같은 데이터를 두 발행 행이 나눠 가지지 않도록) 소비 처리한다.
+    """
+    perf_rows = perf_rows or []
+    by_title = {_norm_title(r.title): r for r in perf_rows}
+    by_date = _build_date_index(perf_rows)
+    used: set[int] = set()
+
+    def match(row, area: str, log: ConfirmLog):
+        md = parse_month_day(row.date_raw)
+        candidates = [c for c in by_date.get(md, []) if id(c) not in used] if md else []
+        perf = None
+        if len(candidates) == 1:
+            perf = candidates[0]
+        elif len(candidates) > 1:
+            title_matches = [c for c in candidates if _norm_title(c.title) == _norm_title(row.title)]
+            if len(title_matches) == 1:
+                perf = title_matches[0]
+            else:
+                log.add(
+                    area, row.title,
+                    f"발행일({md[0]}/{md[1]})에 성과 원본 후보가 {len(candidates)}건이라 "
+                    "제목으로도 특정하지 못해 매칭하지 않음",
+                )
+        if perf is None and not candidates:
+            cand = by_title.get(_norm_title(row.title))
+            if cand is not None and id(cand) not in used:
+                perf = cand
         if perf is not None:
-            ids.add(id(perf))
-    return ids
+            used.add(id(perf))
+        return perf
 
-
-def _match_by_title_or_date(row, by_title: dict, by_date: dict, area: str, log: ConfirmLog):
-    """제목이 정확히 일치하지 않아도(의역·오타 등) 발행일이 정확히 같은 성과 원본이 하나뿐이면
-    그걸로 대신 매칭한다. 같은 날짜에 후보가 여럿이면 어느 쪽인지 알 수 없으니 확인 필요로 남긴다."""
-    perf = by_title.get(_norm_title(row.title))
-    if perf is not None:
-        return perf, "title"
-
-    md = parse_month_day(row.date_raw)
-    if md is None:
-        return None, None
-    candidates = by_date.get(md, [])
-    if len(candidates) == 1:
-        log.add(
-            area, row.title,
-            f"제목이 성과 원본과 정확히 일치하지 않아 발행일({md[0]}/{md[1]})이 같은 항목으로 매칭함"
-            f" (성과 원본 제목: '{candidates[0].title}') — 제목이 맞는지 확인해주세요",
-        )
-        return candidates[0], "date"
-    if len(candidates) > 1:
-        log.add(
-            area, row.title,
-            f"제목은 일치하지 않고, 같은 발행일({md[0]}/{md[1]})의 성과 원본 후보가 {len(candidates)}건이라 "
-            "어느 것인지 특정할 수 없어 매칭하지 않음",
-        )
-    return None, None
+    return match
 
 
 def _publish_date_str(row, perf, year: int) -> str:
-    """실제 게시 시각(성과 원본)이 있으면 그걸 우선한다 — 발행리스트는 '예정일'이라
-    야간 게시 등으로 실제 게시일과 하루 차이가 날 수 있는데, 과거 fn 파일은 실제
-    게시일을 따르고 있었다(실물 대조로 확인함). 성과 원본에 게시 시각이 없으면
-    발행리스트 날짜를 그대로 쓴다."""
+    """발행리스트의 발행일자를 기준으로 쓴다. 성과 원본(메타)의 게시 시각은 태평양시(PT) 기준이라
+    한국 시간 기준 발행일과 하루 어긋나 보일 수 있으므로 기준으로 삼지 않는다 — 발행리스트가
+    없을 때만(이 경우는 애초에 이 함수가 호출되지 않지만, 방어적으로) 성과 원본 값으로 보완한다."""
+    if row.date_raw is not None:
+        return format_kr_date(row.date_raw, year)
     posted_date = parse_posted_at_date(getattr(perf, "posted_at", None))
     if posted_date is not None:
         return format_kr_date(posted_date, year)
-    return format_kr_date(row.date_raw, year)
+    return ""
 
 
 def _need_category(log: ConfirmLog, area: str, title: str) -> None:
