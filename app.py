@@ -88,8 +88,8 @@ with tab1:
         fb_file = st.file_uploader("페이스북 성과 원본 (페이스북 인사이트 CSV)", type=["csv"])
     with c2:
         yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx"])
-        newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx"])
-        blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx"])
+        newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx", "csv"])
+        blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx", "csv"])
         ad_fn_file = st.file_uploader("(선택) 이번 달 로우데이터 AD 최종본 — 캠페인비 매칭용", type=["xlsx"])
         daily_follower_file = st.file_uploader("(선택) 채널별 팔로워/구독자 Daily data", type=["xlsx"])
 
