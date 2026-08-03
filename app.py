@@ -13,6 +13,7 @@ from io import BytesIO
 
 import openpyxl
 import streamlit as st
+from pptx import Presentation
 
 from core.ad_data import build_ad_data
 from core.ad_lookup import extract_campaign_fee_rows
@@ -27,6 +28,7 @@ from core.parsers.meta_ads import parse_meta_ads
 from core.parsers.newsroom_ga import parse_newsroom_ga
 from core.parsers.publish_list import parse_publish_list
 from core.parsers.youtube_studio import parse_youtube_studio
+from core.ppt_report import build_ppt_report
 from core.raw_data import build_raw_data
 
 st.set_page_config(page_title="LX세미콘 월간 리포트 자동화", page_icon="📊", layout="wide")
@@ -64,7 +66,7 @@ st.caption(
 st.caption("🔒 업로드한 파일은 서버에 저장되지 않고 메모리에서만 처리되며, 세션이 끝나면 함께 사라집니다.")
 st.caption("⚠ 판단이 애매하거나 원본에 없는 값은 임의로 채우지 않고 '확인 필요'로 표시합니다. 직접 확인 후 채워주세요.")
 
-tab1, tab2, tab3 = st.tabs(["① 로우데이터(취합)", "② 로우데이터 AD (준비 중)", "③ 월간보고서 PPT (준비 중)"])
+tab1, tab2, tab3 = st.tabs(["① 로우데이터(취합)", "② 로우데이터 AD", "③ 월간보고서 PPT"])
 
 MONTH_KR = {m: f"{m}월" for m in range(1, 13)}
 
@@ -326,4 +328,94 @@ with tab2:
         )
 
 with tab3:
-    st.info("월간보고서 PPT 생성 기능은 준비 중입니다.")
+    col_y3, col_m3 = st.columns(2)
+    with col_y3:
+        ppt_target_year = st.number_input("이번 리포트 연도  ", min_value=2020, max_value=2100, value=2026, step=1, key="ppt_year")
+    with col_m3:
+        ppt_target_month = st.number_input("이번 리포트 월  ", min_value=1, max_value=12, value=7, step=1, key="ppt_month")
+
+    st.subheader("입력 파일")
+    st.caption("★ 표시는 필수 파일입니다. 취합·AD 엑셀은 '확인 필요' 항목까지 다 채운 최종본을 올려주세요.")
+    c1, c2 = st.columns(2)
+    with c1:
+        ppt_prev_file = st.file_uploader("★ 전월 SNS 운영 리포트 PPT (_FN.pptx)", type=["pptx"], key="ppt_prev")
+        ppt_raw_file = st.file_uploader("★ 이번 달 로우데이터(취합) 최종본", type=["xlsx"], key="ppt_raw")
+    with c2:
+        ppt_ad_file = st.file_uploader("이번 달 로우데이터 AD 최종본 (유튜브 캠페인 조회수용)", type=["xlsx"], key="ppt_ad")
+
+    ppt_required_missing = []
+    if ppt_prev_file is None:
+        ppt_required_missing.append("전월 SNS 운영 리포트 PPT")
+    if ppt_raw_file is None:
+        ppt_required_missing.append("이번 달 로우데이터(취합) 최종본")
+    if ppt_ad_file is None:
+        st.info("AD 최종본이 없으면 유튜브 표의 '캠페인/조회수'·'캠페인비' 일부가 비워집니다.")
+
+    st.caption(
+        "⚠ 표 데이터(콘텐츠 운영 내역)만 자동으로 채웁니다. KPI 3개월 추이 표, 네이티브 차트, "
+        "스크린샷 기반 수기 데이터(방문유형·체류시간·성별연령·키워드 등)는 전월 내용이 그대로 "
+        "남아있으니 직접 교체해야 합니다."
+    )
+
+    ppt_process = st.button("처리 시작", type="primary", disabled=bool(ppt_required_missing), key="ppt_process")
+    if ppt_required_missing:
+        st.warning("⚠ 다음 필수 파일이 없어 처리할 수 없습니다: " + ", ".join(ppt_required_missing))
+
+    if ppt_process:
+        try:
+            prev_ppt = Presentation(ppt_prev_file)
+        except Exception as e:
+            st.error(f"전월 PPT를 여는 중 오류: {e}")
+            st.stop()
+
+        try:
+            ppt_raw_wb = openpyxl.load_workbook(ppt_raw_file, data_only=True)
+        except Exception as e:
+            st.error(f"로우데이터(취합) 최종본을 여는 중 오류: {e}")
+            st.stop()
+
+        ppt_ad_wb = None
+        if ppt_ad_file is not None:
+            try:
+                ppt_ad_wb = openpyxl.load_workbook(ppt_ad_file, data_only=True)
+            except Exception as e:
+                st.warning(f"AD 최종본을 읽는 중 오류가 발생해 이 부분은 건너뜁니다: {e}")
+
+        try:
+            ppt_result = build_ppt_report(
+                prev_ppt=prev_ppt, raw_wb=ppt_raw_wb, ad_wb=ppt_ad_wb,
+                target_year=int(ppt_target_year), target_month=int(ppt_target_month),
+            )
+        except Exception as e:
+            st.error(f"처리 중 오류가 발생했습니다: {e}")
+            st.stop()
+
+        st.success("처리를 완료했습니다.")
+
+        st.subheader("체크리스트")
+        n_filled = sum(1 for r in ppt_result.filled_tables if r.filled)
+        n_total = len(ppt_result.filled_tables)
+        st.metric("자동 채움 표", f"{n_filled}/{n_total}")
+        for r in ppt_result.filled_tables:
+            if r.filled:
+                st.write(f"✅ {r.table_label} — {r.n_rows}건 자동 채움")
+            else:
+                st.write(f"⬜ {r.table_label} — {r.reason}")
+
+        if ppt_result.confirm:
+            st.subheader(f"⚠ 확인 필요 항목 ({len(ppt_result.confirm)}건)")
+            for area, items in ppt_result.confirm.by_area().items():
+                with st.expander(f"{area} ({len(items)}건)"):
+                    for item in items:
+                        st.write(f"- **{item.location}** — {item.reason}")
+
+        ppt_buffer = BytesIO()
+        ppt_result.presentation.save(ppt_buffer)
+        ppt_buffer.seek(0)
+        st.download_button(
+            "PPT 다운로드",
+            data=ppt_buffer,
+            file_name=f"_피알원__LX세미콘_{int(ppt_target_month)}월_SNS_운영_리포트_FN.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            key="ppt_download",
+        )
