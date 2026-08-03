@@ -62,6 +62,46 @@ def hms_string_to_hmm_slot(hms: str) -> datetime.time | None:
     return seconds_to_hmm_slot(total_seconds)
 
 
+def parse_posted_at_date(posted_at) -> datetime.date | None:
+    """성과 원본의 게시 시간('06/24/2026 22:12' 같은 MM/DD/YYYY HH:MM 문자열 또는 datetime)에서
+    날짜만 뽑는다. 발행리스트의 '예정일'보다 실제 게시된 이 값이 더 정확한 경우가 있다
+    (예: 야간 게시로 발행리스트 예정일과 하루 차이가 나는 경우 실제 fn 파일은 이 값을 따름)."""
+    if posted_at is None:
+        return None
+    if isinstance(posted_at, datetime.datetime):
+        return posted_at.date()
+    if isinstance(posted_at, datetime.date):
+        return posted_at
+    s = str(posted_at).strip()
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)  # MM/DD/YYYY ...
+    if m:
+        month, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return datetime.date(year, month, day)
+        except ValueError:
+            return None
+    return None
+
+
+def parse_month_day(date_raw) -> tuple[int, int] | None:
+    """발행리스트('6/2(화)' 문자열 또는 datetime)나 성과 원본 게시시간
+    ('06/02/2026 01:03' 같은 MM/DD/YYYY 문자열)에서 (월, 일)만 뽑아 서로 비교할 수 있게 한다."""
+    if date_raw is None:
+        return None
+    if isinstance(date_raw, datetime.datetime):
+        return date_raw.month, date_raw.day
+    if isinstance(date_raw, datetime.date):
+        return date_raw.month, date_raw.day
+    s = str(date_raw).strip()
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/\d{4}", s)  # MM/DD/YYYY ...
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.match(r"^(\d{1,2})/(\d{1,2})", s)  # M/D(요일) 또는 M/D
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
 def roundup_to_10k(amount) -> int | None:
     """캠페인비 = 실지출을 만원(10,000원) 단위로 올림. 179,999 -> 180,000."""
     if amount is None:

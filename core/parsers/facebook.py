@@ -21,6 +21,7 @@ HEADER_CANDIDATES = ["NO", "발행리스트"]
 
 COLS = {
     "title": ["발행리스트"],
+    "posted_at": ["게시 시간"],
     "url": ["고유 링크"],
     "impressions": ["조회수"],  # fn의 '총노출'
     "reach": ["도달"],  # fn의 '총도달'
@@ -34,6 +35,7 @@ COLS = {
 class FacebookRow:
     title: str
     url: str | None
+    posted_at: object
     impressions: float | None
     reach: float | None
     likes: float | None
@@ -84,6 +86,7 @@ def parse_facebook(file) -> list[FacebookRow]:
             FacebookRow(
                 title=str(title).strip(),
                 url=row[col_idx["url"]] or None,
+                posted_at=row[col_idx["posted_at"]],
                 impressions=to_num(row[col_idx["impressions"]]),
                 reach=to_num(row[col_idx["reach"]]),
                 likes=to_num(row[col_idx["likes"]]),

@@ -11,7 +11,7 @@ from openpyxl.workbook import Workbook
 
 from .confirm import ConfirmLog
 from .excel_block import append_month_block, extract_row_formula_template, extract_summary_formula_template, find_month_blocks
-from .formatters import format_kr_date, hms_string_to_hmm_slot, roundup_to_10k, seconds_to_hmm_slot
+from .formatters import format_kr_date, hms_string_to_hmm_slot, parse_month_day, parse_posted_at_date, roundup_to_10k, seconds_to_hmm_slot
 from .month_filter import _parse_month_from_kr_date, filter_by_url_band, filter_youtube_by_video_id, get_prev_max_url_id
 from .parsers.base import extract_youtube_video_id
 
@@ -263,17 +263,18 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
 
 def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_rows, log, stat):
     ws = prev_wb[SHEET_NAMES["인스타그램"]]
+    publish_rows = _filter_rows_by_month(publish_rows, month, "취합/인스타그램_Raw Data", log)
+
     if insta_rows is None:
         log.add("취합/인스타그램_Raw Data", "전체", "인스타그램 성과 원본이 없어 성과를 채울 수 없음")
-        insta_by_title = {}
+        insta_by_title, insta_by_date = {}, {}
     else:
         insta_by_title = {_norm_title(r.title): r for r in insta_rows}
-
-    publish_rows = _filter_rows_by_month(publish_rows, month, "취합/인스타그램_Raw Data", log)
+        insta_by_date = _build_date_index(insta_rows, exclude_ids=_title_matched_perf_ids(publish_rows, insta_by_title))
     stat.total_published = len(publish_rows)
     new_rows = []
     for row in publish_rows:
-        perf = insta_by_title.get(_norm_title(row.title))
+        perf, _ = _match_by_title_or_date(row, insta_by_title, insta_by_date, "취합/인스타그램_Raw Data", log)
         if perf is None:
             stat.unmatched_titles.append(row.title)
             continue  # 성과 원본에 없으면 이번 달 발행분인지 자체가 불확실 -> 교차검증 실패로 스킵
@@ -288,7 +289,7 @@ def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_ro
 
         new_rows.append(
             {
-                "C": format_kr_date(row.date_raw, year),
+                "C": _publish_date_str(row, perf, year),
                 "D": row.category or _need_category(log, "취합/인스타그램_Raw Data", row.title),
                 "E": row.title,
                 "F": row.url or perf.url,
@@ -323,24 +324,25 @@ def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_ro
 
 def _build_facebook(prev_wb, year, month, publish_rows, fb_rows, log, stat):
     ws = prev_wb[SHEET_NAMES["페이스북"]]
+    publish_rows = _filter_rows_by_month(publish_rows, month, "취합/페이스북_Raw Data", log)
+
     if fb_rows is None:
         log.add("취합/페이스북_Raw Data", "전체", "페이스북 성과 원본이 없어 성과를 채울 수 없음")
-        fb_by_title = {}
+        fb_by_title, fb_by_date = {}, {}
     else:
         fb_by_title = {_norm_title(r.title): r for r in fb_rows}
-
-    publish_rows = _filter_rows_by_month(publish_rows, month, "취합/페이스북_Raw Data", log)
+        fb_by_date = _build_date_index(fb_rows, exclude_ids=_title_matched_perf_ids(publish_rows, fb_by_title))
     stat.total_published = len(publish_rows)
     new_rows = []
     for row in publish_rows:
-        perf = fb_by_title.get(_norm_title(row.title))
+        perf, _ = _match_by_title_or_date(row, fb_by_title, fb_by_date, "취합/페이스북_Raw Data", log)
         if perf is None:
             stat.unmatched_titles.append(row.title)
             continue
         stat.matched += 1
         new_rows.append(
             {
-                "C": format_kr_date(row.date_raw, year),
+                "C": _publish_date_str(row, perf, year),
                 "D": row.category or _need_category(log, "취합/페이스북_Raw Data", row.title),
                 "E": row.title,
                 "F": row.url or perf.url,
@@ -355,6 +357,67 @@ def _build_facebook(prev_wb, year, month, publish_rows, fb_rows, log, stat):
         )
     if new_rows:
         _append_generic(ws, new_rows)
+
+
+def _build_date_index(perf_rows: list, exclude_ids: set[int] = frozenset()) -> dict[tuple[int, int], list]:
+    idx: dict[tuple[int, int], list] = {}
+    for r in perf_rows:
+        if id(r) in exclude_ids:
+            continue
+        md = parse_month_day(getattr(r, "posted_at", None))
+        if md is not None:
+            idx.setdefault(md, []).append(r)
+    return idx
+
+
+def _title_matched_perf_ids(publish_rows: list, by_title: dict) -> set[int]:
+    """제목으로 이미 매칭될 성과 원본들의 id() 집합. 발행리스트에는 연도 표기가 없어
+    작년 동월 콘텐츠가 섞여 있을 수 있는데, 그런 행이 날짜만 우연히 같은 이번 달 진짜
+    게시물을 가로채 이중 매칭하지 않도록, 날짜 매칭 대상에서 미리 제외한다."""
+    ids = set()
+    for row in publish_rows:
+        perf = by_title.get(_norm_title(row.title))
+        if perf is not None:
+            ids.add(id(perf))
+    return ids
+
+
+def _match_by_title_or_date(row, by_title: dict, by_date: dict, area: str, log: ConfirmLog):
+    """제목이 정확히 일치하지 않아도(의역·오타 등) 발행일이 정확히 같은 성과 원본이 하나뿐이면
+    그걸로 대신 매칭한다. 같은 날짜에 후보가 여럿이면 어느 쪽인지 알 수 없으니 확인 필요로 남긴다."""
+    perf = by_title.get(_norm_title(row.title))
+    if perf is not None:
+        return perf, "title"
+
+    md = parse_month_day(row.date_raw)
+    if md is None:
+        return None, None
+    candidates = by_date.get(md, [])
+    if len(candidates) == 1:
+        log.add(
+            area, row.title,
+            f"제목이 성과 원본과 정확히 일치하지 않아 발행일({md[0]}/{md[1]})이 같은 항목으로 매칭함"
+            f" (성과 원본 제목: '{candidates[0].title}') — 제목이 맞는지 확인해주세요",
+        )
+        return candidates[0], "date"
+    if len(candidates) > 1:
+        log.add(
+            area, row.title,
+            f"제목은 일치하지 않고, 같은 발행일({md[0]}/{md[1]})의 성과 원본 후보가 {len(candidates)}건이라 "
+            "어느 것인지 특정할 수 없어 매칭하지 않음",
+        )
+    return None, None
+
+
+def _publish_date_str(row, perf, year: int) -> str:
+    """실제 게시 시각(성과 원본)이 있으면 그걸 우선한다 — 발행리스트는 '예정일'이라
+    야간 게시 등으로 실제 게시일과 하루 차이가 날 수 있는데, 과거 fn 파일은 실제
+    게시일을 따르고 있었다(실물 대조로 확인함). 성과 원본에 게시 시각이 없으면
+    발행리스트 날짜를 그대로 쓴다."""
+    posted_date = parse_posted_at_date(getattr(perf, "posted_at", None))
+    if posted_date is not None:
+        return format_kr_date(posted_date, year)
+    return format_kr_date(row.date_raw, year)
 
 
 def _need_category(log: ConfirmLog, area: str, title: str) -> None:

@@ -1,20 +1,24 @@
 """콘텐츠 발행리스트 파서.
 
-⚠ 이 파일은 실제 샘플을 아직 확보하지 못한 상태로 작성되었다. 컬럼명을 하드코딩하는 대신
-후보 이름들을 넓게 스캔하고, URL 열은 이름이 아니라 '셀 값이 실제로 URL인지'로 탐지한다
-(어느 채널 URL인지는 도메인으로 자동 분류되므로 채널 열이 따로 없어도 동작한다).
-필수 정보를 찾지 못하면 절대 추정하지 않고 ParseError로 무엇을 못 찾았는지 알린다.
+실제 샘플로 확인된 형식: 채널별로 시트가 나뉘어 있다(뉴스룸/블로그/페이스북/인스타그램/유튜브).
+시트 이름 자체가 채널이므로 그걸 그대로 쓰고, 시트마다 헤더 행(NO/발행일/카테고리/콘텐츠 주제/
+URL/유형)의 정확한 위치를 개별적으로 찾는다. 필수 정보를 찾지 못한 시트는 절대 추정하지 않고
+확인 필요로 남긴다(호출 측에 알 수 있도록 로그를 남기고 그 시트는 건너뜀).
 """
 
 from dataclasses import dataclass
 
-from .base import URL_RE, ParseError, classify_channel_by_url, find_column, load_sheet_rows
+import openpyxl
+
+from .base import URL_RE, ParseError, classify_channel_by_url, find_column
 
 DATE_CANDIDATES = ["발행일", "게시일", "날짜", "게시일자", "발행일자"]
 CATEGORY_CANDIDATES = ["카테고리", "구분"]
 TITLE_CANDIDATES = ["콘텐츠 주제", "콘텐츠명", "제목", "콘텐츠", "주제"]
 TYPE_CANDIDATES = ["유형", "형태", "콘텐츠 유형", "콘텐츠 형태"]
 CHANNEL_CANDIDATES = ["채널", "플랫폼"]
+
+KNOWN_CHANNELS = ["뉴스룸", "유튜브", "인스타그램", "페이스북", "블로그"]
 
 
 @dataclass
@@ -27,8 +31,8 @@ class PublishListRow:
     content_type: str | None
 
 
-def _find_url_column(header: list, rows: list[list]) -> int | None:
-    n_cols = len(header)
+def _find_url_column(rows: list[list]) -> int | None:
+    n_cols = max((len(r) for r in rows[:50]), default=0)
     best_col, best_hits = None, 0
     for col in range(n_cols):
         hits = 0
@@ -47,11 +51,10 @@ def _find_url_column(header: list, rows: list[list]) -> int | None:
     return best_col
 
 
-def parse_publish_list(file) -> list[PublishListRow]:
-    _, rows = load_sheet_rows(file)
-    if not rows:
-        raise ParseError("콘텐츠 발행리스트 파일이 비어 있습니다.")
-
+def _parse_sheet_rows(rows: list[list], default_channel: str | None) -> list[PublishListRow]:
+    """한 시트(=보통 한 채널) 안의 행들을 파싱한다. 여러 채널 블록이 섞여 있어도(예: 시트
+    안에서 '뉴스룸' 같은 라벨이 다시 나오는 경우는 없다고 가정) 헤더가 반복되지 않는 한
+    전체를 한 번에 처리한다."""
     header_idx = None
     for i, row in enumerate(rows[:15]):
         texts = {str(c).strip() for c in row if c is not None}
@@ -60,19 +63,15 @@ def parse_publish_list(file) -> list[PublishListRow]:
             break
     if header_idx is None:
         raise ParseError(
-            "콘텐츠 발행리스트에서 헤더 행을 찾지 못했습니다. "
-            f"다음 이름들 중 하나라도 포함된 행이 있어야 합니다: "
-            f"{DATE_CANDIDATES + TITLE_CANDIDATES}"
+            "헤더 행을 찾지 못했습니다. "
+            f"다음 이름들 중 하나라도 포함된 행이 있어야 합니다: {DATE_CANDIDATES + TITLE_CANDIDATES}"
         )
     header = rows[header_idx]
     data_rows = rows[header_idx + 1 :]
 
-    url_col = _find_url_column(header, data_rows)
+    url_col = _find_url_column(data_rows)
     if url_col is None:
-        raise ParseError(
-            "콘텐츠 발행리스트에서 URL이 들어있는 열을 찾지 못했습니다. "
-            "각 행에 콘텐츠 URL(뉴스룸/유튜브/인스타/페북/블로그 링크)이 있어야 합니다."
-        )
+        raise ParseError("URL이 들어있는 열을 찾지 못했습니다.")
 
     date_col = find_column(header, DATE_CANDIDATES)
     category_col = find_column(header, CATEGORY_CANDIDATES)
@@ -86,9 +85,7 @@ def parse_publish_list(file) -> list[PublishListRow]:
     if title_col is None:
         missing.append(f"콘텐츠 제목 (후보: {TITLE_CANDIDATES})")
     if missing:
-        raise ParseError(
-            "콘텐츠 발행리스트에서 다음 필수 열을 찾지 못했습니다:\n- " + "\n- ".join(missing)
-        )
+        raise ParseError("다음 필수 열을 찾지 못했습니다:\n- " + "\n- ".join(missing))
 
     out: list[PublishListRow] = []
     for row in data_rows:
@@ -100,10 +97,12 @@ def parse_publish_list(file) -> list[PublishListRow]:
         channel = None
         if channel_col is not None and channel_col < len(row) and row[channel_col]:
             channel = str(row[channel_col]).strip()
+        elif default_channel is not None:
+            channel = default_channel
         else:
             channel = classify_channel_by_url(url)
         if channel is None:
-            continue  # 어느 채널인지 판별 불가 -> 이 행은 스킵 (호출 측에서 URL 매칭 실패로 확인 필요 처리)
+            continue
 
         out.append(
             PublishListRow(
@@ -123,4 +122,36 @@ def parse_publish_list(file) -> list[PublishListRow]:
                 ),
             )
         )
+    return out
+
+
+def parse_publish_list(file) -> list[PublishListRow]:
+    wb = openpyxl.load_workbook(file, data_only=True)
+
+    # 실제 파일은 채널별로 시트가 나뉘어 있다(뉴스룸/블로그/페이스북/인스타그램/유튜브).
+    # 시트 이름이 알려진 채널명을 포함하면 그 시트 전체를 그 채널로 간주해서 파싱한다.
+    channel_sheets = [(name, ch) for name in wb.sheetnames for ch in KNOWN_CHANNELS if ch in name]
+
+    out: list[PublishListRow] = []
+    errors: list[str] = []
+
+    if channel_sheets:
+        for sheet_name, channel in channel_sheets:
+            ws = wb[sheet_name]
+            rows = [[c.value for c in row] for row in ws.iter_rows()]
+            try:
+                out.extend(_parse_sheet_rows(rows, default_channel=channel))
+            except ParseError as e:
+                errors.append(f"'{sheet_name}' 시트: {e}")
+    else:
+        # 채널별 시트 구분이 없는 단일 시트 형식 (URL 도메인으로 채널 판별)
+        ws = wb[wb.sheetnames[0]]
+        rows = [[c.value for c in row] for row in ws.iter_rows()]
+        try:
+            out.extend(_parse_sheet_rows(rows, default_channel=None))
+        except ParseError as e:
+            errors.append(f"'{ws.title}' 시트: {e}")
+
+    if not out and errors:
+        raise ParseError("콘텐츠 발행리스트를 읽지 못했습니다:\n- " + "\n- ".join(errors))
     return out

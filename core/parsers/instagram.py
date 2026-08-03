@@ -30,6 +30,7 @@ COLS = {
 class InstagramRow:
     title: str
     url: str | None
+    posted_at: object
     reach: float | None
     views: float | None
     likes: float | None
@@ -72,6 +73,7 @@ def parse_instagram(file) -> list[InstagramRow]:
             InstagramRow(
                 title=str(title).strip(),
                 url=row[col_idx["url"]],
+                posted_at=row[col_idx["posted_at"]],
                 reach=row[col_idx["reach"]],
                 views=row[col_idx["views"]],
                 likes=row[col_idx["likes"]],
