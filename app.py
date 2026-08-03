@@ -29,7 +29,7 @@ from core.parsers.newsroom_ga import parse_newsroom_ga
 from core.parsers.publish_list import parse_publish_list
 from core.parsers.youtube_studio import parse_youtube_studio
 from core.ppt_report import build_ppt_report
-from core.raw_data import build_raw_data
+from core.raw_data import SHEET_NAMES, build_raw_data
 
 st.set_page_config(page_title="LX세미콘 월간 리포트 자동화", page_icon="📊", layout="wide")
 
@@ -127,6 +127,16 @@ with tab1:
             prev_wb = openpyxl.load_workbook(prev_fn_file)
         except Exception as e:
             st.error(f"전월 로우데이터(취합) 최종본을 여는 중 오류: {e}")
+            st.stop()
+
+        missing_sheets = [s for s in SHEET_NAMES.values() if s not in prev_wb.sheetnames]
+        if missing_sheets:
+            st.error(
+                "업로드하신 파일에 다음 시트가 없습니다: " + ", ".join(missing_sheets) + "\n\n"
+                "'전월 로우데이터(취합) 최종본' 파일이 맞는지 확인해주세요 "
+                "(AD 파일이나 다른 파일을 잘못 올렸을 수 있습니다). "
+                f"이 파일에 실제로 있는 시트: {', '.join(prev_wb.sheetnames)}"
+            )
             st.stop()
 
         try:
@@ -264,6 +274,16 @@ with tab2:
             st.error(f"전월 로우데이터 AD 최종본을 여는 중 오류: {e}")
             st.stop()
 
+        ad_required_sheets = ["유튜브_캠페인", "인스타그램_참여", "인스타그램_도달"]
+        ad_missing_sheets = [s for s in ad_required_sheets if s not in ad_prev_wb.sheetnames]
+        if ad_missing_sheets:
+            st.error(
+                "업로드하신 파일에 다음 시트가 없습니다: " + ", ".join(ad_missing_sheets) + "\n\n"
+                "'전월 로우데이터 AD 최종본' 파일이 맞는지 확인해주세요. "
+                f"이 파일에 실제로 있는 시트: {', '.join(ad_prev_wb.sheetnames)}"
+            )
+            st.stop()
+
         try:
             ad_publish_rows = parse_publish_list(ad_publish_list_file)
         except ParseError as e:
@@ -372,6 +392,15 @@ with tab3:
             ppt_raw_wb = openpyxl.load_workbook(ppt_raw_file, data_only=True)
         except Exception as e:
             st.error(f"로우데이터(취합) 최종본을 여는 중 오류: {e}")
+            st.stop()
+
+        ppt_missing_sheets = [s for s in SHEET_NAMES.values() if s not in ppt_raw_wb.sheetnames]
+        if ppt_missing_sheets:
+            st.error(
+                "업로드하신 파일에 다음 시트가 없습니다: " + ", ".join(ppt_missing_sheets) + "\n\n"
+                "'이번 달 로우데이터(취합) 최종본' 파일이 맞는지 확인해주세요. "
+                f"이 파일에 실제로 있는 시트: {', '.join(ppt_raw_wb.sheetnames)}"
+            )
             st.stop()
 
         ppt_ad_wb = None

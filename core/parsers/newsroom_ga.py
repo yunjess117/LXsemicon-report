@@ -6,9 +6,12 @@
 "확인 필요"로 넘어가게 한다 — 절대 일별 합계를 콘텐츠 단위로 나눠 추정하지 않는다.
 """
 
+import re
 from dataclasses import dataclass
 
 from .base import ParseError, find_column, load_any_tabular
+
+PATH_ID_RE = re.compile(r"^/?\d+/?$")
 
 VIEW_CANDIDATES = ["조회수", "페이지뷰", "PV", "조회 수"]
 URL_OR_TITLE_CANDIDATES = ["URL", "콘텐츠 URL", "페이지", "제목", "콘텐츠명", "콘텐츠 주제"]
@@ -32,6 +35,36 @@ def _to_num(v):
         return None
 
 
+def _find_path_id_columns(rows: list[list]) -> tuple[int, int] | None:
+    """헤더 이름이 후보 목록과 안 맞을 때를 대비한 보강 탐지: '/10287'처럼 URL 경로+번호로
+    보이는 값이 대부분인 열과, 그 옆에 숫자가 대부분인 열이 있으면 (키 열, 조회수 열)로 본다.
+    실제로 확인된 GA 내보내기 중에는 헤더 없이 이 두 열만 있는 형식이 있었다."""
+    if not rows:
+        return None
+    n_cols = max((len(r) for r in rows[:50]), default=0)
+
+    def ratio(col, pattern_check):
+        checked = hits = 0
+        for r in rows[:200]:
+            if col >= len(r) or r[col] in (None, ""):
+                continue
+            checked += 1
+            if pattern_check(r[col]):
+                hits += 1
+        return (hits / checked) if checked else 0
+
+    id_cols = [c for c in range(n_cols) if ratio(c, lambda v: bool(PATH_ID_RE.match(str(v).strip()))) > 0.6]
+    if not id_cols:
+        return None
+    for key_col in id_cols:
+        for view_col in range(n_cols):
+            if view_col == key_col:
+                continue
+            if ratio(view_col, lambda v: _to_num(v) is not None) > 0.6:
+                return key_col, view_col
+    return None
+
+
 def parse_newsroom_ga(file) -> list[NewsroomGaRow]:
     tables = load_any_tabular(file)
     for _, rows in tables:
@@ -50,6 +83,24 @@ def parse_newsroom_ga(file) -> list[NewsroomGaRow]:
                 key = r[key_col]
                 views = _to_num(r[view_col])
                 if key is None or views is None:
+                    continue
+                out.append(NewsroomGaRow(key=str(key).strip(), views=views))
+            if out:
+                return out
+
+        # 헤더 이름으로 못 찾았으면, 값 패턴(경로+번호 / 숫자)으로 다시 시도
+        found = _find_path_id_columns(rows)
+        if found:
+            key_col, view_col = found
+            out = []
+            for r in rows:
+                if key_col >= len(r) or view_col >= len(r):
+                    continue
+                key, raw_view = r[key_col], r[view_col]
+                if not key or not PATH_ID_RE.match(str(key).strip()):
+                    continue
+                views = _to_num(raw_view)
+                if views is None:
                     continue
                 out.append(NewsroomGaRow(key=str(key).strip(), views=views))
             if out:
