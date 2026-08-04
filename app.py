@@ -46,7 +46,10 @@ SECTION_INPUT = "#2563EB"    # ① 입력 파일
 SECTION_SOURCE = "#059669"   # ② 채널 원본 데이터
 SECTION_RUN = "#7C3AED"      # ③ 취합 실행
 
-CARD_KEYS = ["card_prev", "card_input", "card_content", "card_ads"]
+CARD_KEYS = [
+    "card_prev", "card_input", "card_content", "card_ads",
+    "card_ppt_prev", "card_ppt_raw", "card_ppt_ad",
+]
 _card_selectors = ", ".join(f".st-key-{k}" for k in CARD_KEYS)
 # 카드를 감싸는 Streamlit 래퍼가 기본값(flex:0 1 auto)이라 내용 높이에 맞춰 줄어든다.
 # 이 래퍼를 늘려줘야 카드의 height:100%가 먹어서 좌우 카드 높이가 같아진다.
@@ -123,24 +126,43 @@ st.markdown(
         background: #F9FAFB; color: {TEXT_TITLE}; border-color: #9CA3AF;
     }}
 
+    /* 채운 내역 — 채움은 초록, 확인 필요는 주황으로 구분 */
+    .fill-channel {{
+        font-size: 0.86rem; font-weight: 700; color: {TEXT_TITLE};
+        margin: 0.9rem 0 0.35rem 0;
+    }}
+    .fill-row {{
+        display: flex; align-items: baseline; gap: 0.6rem;
+        padding: 0.4rem 0.7rem; margin-bottom: 0.25rem;
+        border-radius: 6px; border-left: 3px solid;
+        font-size: 0.84rem; line-height: 1.4;
+    }}
+    .fill-row.fill-ok   {{ background: #F0FDF4; border-left-color: #16A34A; color: #14532D; }}
+    .fill-row.fill-todo {{ background: #FFFBEB; border-left-color: #D97706; color: #78350F; }}
+    .fill-slide {{
+        flex: 0 0 2.6rem; font-weight: 700; font-variant-numeric: tabular-nums;
+    }}
+    .fill-target {{ flex: 0 0 auto; font-weight: 600; }}
+    .fill-detail {{ flex: 1 1 auto; opacity: 0.85; }}
+
     /* 실행 버튼 — 마지막 액션이므로 화면에서 가장 뚜렷하게 */
-    .st-key-btn_raw button, .st-key-btn_ad button {{
+    .st-key-btn_raw button, .st-key-btn_ad button, .st-key-btn_ppt button {{
         width: 100%; min-height: 3.5rem;
         background: {ACTION}; color: #fff;
         border: 1px solid {ACTION}; border-radius: 8px;
         box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
         transition: background .12s ease;
     }}
-    .st-key-btn_raw button p, .st-key-btn_ad button p {{
+    .st-key-btn_raw button p, .st-key-btn_ad button p, .st-key-btn_ppt button p {{
         font-size: 1.02rem !important; font-weight: 700 !important; letter-spacing: -0.01em;
     }}
-    .st-key-btn_raw button:hover:enabled, .st-key-btn_ad button:hover:enabled {{
+    .st-key-btn_raw button:hover:enabled, .st-key-btn_ad button:hover:enabled, .st-key-btn_ppt button:hover:enabled {{
         background: #1F2937; border-color: #1F2937; color: #fff;
     }}
-    .st-key-btn_raw button:disabled, .st-key-btn_ad button:disabled {{
+    .st-key-btn_raw button:disabled, .st-key-btn_ad button:disabled, .st-key-btn_ppt button:disabled {{
         background: #F3F4F6; border-color: {CARD_BORDER}; box-shadow: none;
     }}
-    .st-key-btn_raw button:disabled p, .st-key-btn_ad button:disabled p {{ color: #9CA3AF; }}
+    .st-key-btn_raw button:disabled p, .st-key-btn_ad button:disabled p, .st-key-btn_ppt button:disabled p {{ color: #9CA3AF; }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -535,14 +557,28 @@ with tab_ppt:
     with col_m3:
         ppt_target_month = st.number_input("이번 리포트 월  ", min_value=1, max_value=12, value=7, step=1, key="ppt_month")
 
-    st.subheader("입력 파일")
-    st.caption("★ 표시는 필수 파일입니다. 취합·AD 엑셀은 '확인 필요' 항목까지 다 채운 최종본을 올려주세요.")
-    c1, c2 = st.columns(2)
-    with c1:
+    section_header(
+        "1", "전월 데이터", "이번 달 리포트의 템플릿이 될 전월 PPT를 업로드하세요. ★는 필수입니다.", SECTION_INPUT
+    )
+    with st.container(key="card_ppt_prev"):
+        card_title("전월 SNS 운영 리포트 PPT", "슬라이드 구성·디자인을 그대로 복제해 이번 달 값으로 교체합니다.")
         ppt_prev_file = st.file_uploader("★ 전월 SNS 운영 리포트 PPT (_FN.pptx)", type=["pptx"], key="ppt_prev")
-        ppt_raw_file = st.file_uploader("★ 이번 달 로우데이터(취합) 최종본", type=["xlsx"], key="ppt_raw")
-    with c2:
-        ppt_ad_file = st.file_uploader("이번 달 로우데이터 AD 최종본 (유튜브 캠페인 조회수용)", type=["xlsx"], key="ppt_ad")
+        st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
+
+    section_header(
+        "2", "이번 달 데이터", "'확인 필요' 항목까지 다 채운 최종본을 올려주세요.", SECTION_SOURCE
+    )
+    ppt_l, ppt_r = st.columns(2)
+    with ppt_l:
+        with st.container(key="card_ppt_raw"):
+            card_title("로우데이터(취합)", "콘텐츠 운영 내역·유입데이터 분석 표에 사용합니다.")
+            ppt_raw_file = st.file_uploader("★ 이번 달 로우데이터(취합) 최종본", type=["xlsx"], key="ppt_raw")
+            st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
+    with ppt_r:
+        with st.container(key="card_ppt_ad"):
+            card_title("로우데이터 AD", "캠페인 운영 요약 표와 유튜브 캠페인 조회수에 사용합니다.")
+            ppt_ad_file = st.file_uploader("이번 달 로우데이터 AD 최종본", type=["xlsx"], key="ppt_ad")
+            st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
     ppt_required_missing = []
     if ppt_prev_file is None:
@@ -550,15 +586,19 @@ with tab_ppt:
     if ppt_raw_file is None:
         ppt_required_missing.append("이번 달 로우데이터(취합) 최종본")
     if ppt_ad_file is None:
-        st.info("AD 최종본이 없으면 유튜브 표의 '캠페인/조회수'·'캠페인비' 일부가 비워집니다.")
+        st.info("AD 최종본이 없으면 캠페인 운영 요약 표와 유튜브 '캠페인/조회수'·'캠페인비'가 비워집니다.")
 
     st.caption(
-        "⚠ 표 데이터(콘텐츠 운영 내역)만 자동으로 채웁니다. KPI 3개월 추이 표, 네이티브 차트, "
-        "스크린샷 기반 수기 데이터(방문유형·체류시간·성별연령·키워드 등)는 전월 내용이 그대로 "
-        "남아있으니 직접 교체해야 합니다."
+        "⚠ 표 데이터(유입데이터 분석 · 콘텐츠 운영 내역 · 캠페인 운영 요약)만 자동으로 채웁니다. "
+        "KPI 3개월 추이 표, 네이티브 차트, 스크린샷 기반 수기 데이터(방문유형·체류시간·성별연령·"
+        "키워드 등)는 전월 내용이 그대로 남아있으니 직접 교체해야 합니다."
     )
 
-    ppt_process = st.button("처리 시작", type="primary", disabled=bool(ppt_required_missing), key="ppt_process")
+    section_header("3", "PPT 생성", "채운 내역과 확인 필요 항목을 확인한 뒤 내려받으세요.", SECTION_RUN)
+    with st.container(key="btn_ppt"):
+        ppt_process = st.button(
+            "월간보고서 PPT 생성", disabled=bool(ppt_required_missing), key="ppt_process", use_container_width=True
+        )
     if ppt_required_missing:
         st.warning("⚠ 다음 필수 파일이 없어 처리할 수 없습니다: " + ", ".join(ppt_required_missing))
 
@@ -602,22 +642,29 @@ with tab_ppt:
 
         st.success("처리를 완료했습니다.")
 
-        st.subheader("체크리스트")
-        n_filled = sum(1 for r in ppt_result.filled_tables if r.filled)
-        n_total = len(ppt_result.filled_tables)
-        st.metric("자동 채움 표", f"{n_filled}/{n_total}")
-        for r in ppt_result.filled_tables:
-            if r.filled:
-                st.write(f"✅ {r.table_label} — {r.n_rows}건 자동 채움")
-            else:
-                st.write(f"⬜ {r.table_label} — {r.reason}")
+        st.subheader("채운 내역")
+        m1, m2 = st.columns(2)
+        m1.metric("자동 채움", f"{ppt_result.n_filled}건")
+        m2.metric("확인 필요", f"{ppt_result.n_todo}건")
+
+        for channel, entries in ppt_result.by_channel().items():
+            st.markdown(f'<div class="fill-channel">{channel}</div>', unsafe_allow_html=True)
+            for e in entries:
+                cls = "fill-ok" if e.ok else "fill-todo"
+                st.markdown(
+                    f'<div class="fill-row {cls}">'
+                    f'<span class="fill-slide">{e.slide_label}</span>'
+                    f'<span class="fill-target">{e.target}</span>'
+                    f'<span class="fill-detail">{e.detail}</span></div>',
+                    unsafe_allow_html=True,
+                )
 
         if ppt_result.confirm:
-            st.subheader(f"⚠ 확인 필요 항목 ({len(ppt_result.confirm)}건)")
-            for area, items in ppt_result.confirm.by_area().items():
-                with st.expander(f"{area} ({len(items)}건)"):
+            with st.expander(f"⚠ 확인 필요 항목 상세 ({len(ppt_result.confirm)}건)"):
+                for area, items in ppt_result.confirm.by_area().items():
+                    st.markdown(f"**{area}**")
                     for item in items:
-                        st.write(f"- **{item.location}** — {item.reason}")
+                        st.write(f"- {item.location} — {item.reason}")
 
         ppt_buffer = BytesIO()
         ppt_result.presentation.save(ppt_buffer)
