@@ -46,11 +46,21 @@ SECTION_INPUT = "#2563EB"    # ① 입력 파일
 SECTION_SOURCE = "#059669"   # ② 채널 원본 데이터
 SECTION_RUN = "#7C3AED"      # ③ 취합 실행
 
-CARD_KEYS = [
-    "card_prev", "card_input", "card_content", "card_ads",
-    "card_ppt_prev", "card_ppt_raw", "card_ppt_ad",
-]
+# 카드 -> 그 카드가 속한 섹션 색. 카드 위쪽에만 같은 색 라인을 둘러 섹션을 묶어 보이게 한다.
+CARD_SECTION = {
+    "card_prev": SECTION_INPUT,
+    "card_input": SECTION_INPUT,
+    "card_content": SECTION_SOURCE,
+    "card_ads": SECTION_SOURCE,
+    "card_ppt_prev": SECTION_INPUT,
+    "card_ppt_raw": SECTION_SOURCE,
+    "card_ppt_ad": SECTION_SOURCE,
+}
+CARD_KEYS = list(CARD_SECTION)
 _card_selectors = ", ".join(f".st-key-{k}" for k in CARD_KEYS)
+_card_top_lines = "\n".join(
+    f".st-key-{k} {{ border-top: 3px solid {color}; }}" for k, color in CARD_SECTION.items()
+)
 # 카드를 감싸는 Streamlit 래퍼가 기본값(flex:0 1 auto)이라 내용 높이에 맞춰 줄어든다.
 # 이 래퍼를 늘려줘야 카드의 height:100%가 먹어서 좌우 카드 높이가 같아진다.
 _card_wrappers = ", ".join(
@@ -87,7 +97,7 @@ st.markdown(
     /* 좌우 카드 높이 통일 */
     {_card_wrappers} {{ flex: 1 1 auto; }}
 
-    /* 카드 — 흰 배경 + 연한 테두리. 카드 자체에는 색을 쓰지 않는다 */
+    /* 카드 — 흰 배경 + 연한 테두리. 색은 위쪽 라인으로만 써서 같은 섹션끼리 묶어 보이게 한다 */
     {_card_selectors} {{
         background: {CARD_BG};
         border: 1px solid {CARD_BORDER};
@@ -95,6 +105,7 @@ st.markdown(
         padding: 1.05rem 1.2rem 0.35rem 1.2rem;
         height: 100%;
     }}
+    {_card_top_lines}
     .card-title {{
         font-size: 0.95rem; font-weight: 700; color: {TEXT_TITLE};
         letter-spacing: -0.01em; margin: 0 0 0.15rem 0;
@@ -113,9 +124,12 @@ st.markdown(
         padding: 0.5rem 0.75rem;
         min-height: 0;
     }}
-    [data-testid="stFileUploaderDropzoneInstructions"] {{ color: {TEXT_MUTED}; }}
-    [data-testid="stFileUploaderDropzoneInstructions"] span {{ display: none; }}  /* 큰 클라우드 아이콘 제거 */
-    [data-testid="stFileUploaderDropzoneInstructions"] small {{ font-size: 0.72rem; color: #9CA3AF; }}
+    /* 허용 파일 형식은 Upload 버튼 옆에 작게 (예: 200MB per file • XLSX, CSV) */
+    [data-testid="stFileUploaderDropzoneInstructions"] {{ color: #9CA3AF; }}
+    [data-testid="stFileUploaderDropzoneInstructions"] span {{
+        font-size: 0.72rem; color: #9CA3AF; line-height: 1.3;
+    }}
+    [data-testid="stFileUploaderDropzone"] button [data-testid="stIconMaterial"] {{ display: none; }}
     [data-testid="stFileUploaderDropzone"] button {{
         background: #fff; color: {TEXT_BODY};
         border: 1px solid #D1D5DB; border-radius: 6px;
@@ -301,8 +315,8 @@ with tab_data:
             card_title("콘텐츠 성과", "채널별 발행 콘텐츠의 성과 원본입니다.")
             newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx", "csv"], key="newsroom")
             yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx"], key="youtube")
-            insta_file = st.file_uploader("인스타그램 성과 원본 (메타 콘텐츠 인사이트)", type=["xlsx"], key="instagram")
-            fb_file = st.file_uploader("페이스북 성과 원본 (페이스북 인사이트 CSV)", type=["csv"], key="facebook")
+            insta_file = st.file_uploader("인스타그램 성과 원본 (메타 콘텐츠 인사이트)", type=["xlsx", "csv"], key="instagram")
+            fb_file = st.file_uploader("페이스북 성과 원본 (페이스북 인사이트)", type=["csv", "xlsx"], key="facebook")
             blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx", "csv"], key="blog")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 

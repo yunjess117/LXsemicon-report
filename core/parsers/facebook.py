@@ -1,4 +1,4 @@
-"""페이스북 성과 원본 (페이스북 인사이트 CSV, UTF-8 BOM) 파서.
+"""페이스북 성과 원본 (페이스북 인사이트) 파서. csv(UTF-8 BOM)와 xlsx 둘 다 받는다.
 
 실제 6월 샘플로 확인된 컬럼:
   NO, 발행리스트, 제목, 게시 시간, 고유 링크, 게시물 유형, 조회수, 일반 게시물의 조회수,
@@ -11,11 +11,9 @@
   '공감'/'댓글'/'공유' -> 그대로 좋아요/댓글/공유
 """
 
-import csv
-import io
 from dataclasses import dataclass
 
-from .base import ParseError, find_column
+from .base import ParseError, find_column, find_table_with_header, to_number
 
 HEADER_CANDIDATES = ["NO", "발행리스트"]
 
@@ -44,20 +42,11 @@ class FacebookRow:
 
 
 def parse_facebook(file) -> list[FacebookRow]:
-    raw = file.read()
-    if isinstance(raw, bytes):
-        text = raw.decode("utf-8-sig")
-    else:
-        text = raw
-    reader = csv.reader(io.StringIO(text))
-    rows = list(reader)
-    if not rows:
-        raise ParseError("페이스북 성과 원본 CSV가 비어 있습니다.")
-
-    header = rows[0]
-    if not (set(HEADER_CANDIDATES) <= {h.strip() for h in header}):
+    header, data_rows = find_table_with_header(file, HEADER_CANDIDATES)
+    if header is None:
         raise ParseError(
-            f"페이스북 성과 원본 CSV의 첫 행이 예상한 헤더(NO, 발행리스트 포함)가 아닙니다: {header}"
+            "페이스북 성과 원본에서 헤더 행(NO, 발행리스트 포함)을 찾지 못했습니다. "
+            "페이스북 인사이트 내보내기 파일(csv 또는 xlsx)이 맞는지 확인해주세요."
         )
 
     col_idx = {}
@@ -67,31 +56,25 @@ def parse_facebook(file) -> list[FacebookRow]:
             raise ParseError(f"페이스북 성과 원본에서 '{candidates[0]}' 열을 찾지 못했습니다.")
         col_idx[key] = idx
 
-    def to_num(v):
-        if v in (None, "", "-"):
-            return None
-        try:
-            return float(str(v).replace(",", ""))
-        except ValueError:
-            return None
+    def cell(row, key):
+        i = col_idx[key]
+        return row[i] if i < len(row) else None
 
     out: list[FacebookRow] = []
-    for row in rows[1:]:
-        if len(row) <= max(col_idx.values()):
-            continue
-        title = row[col_idx["title"]]
+    for row in data_rows:
+        title = cell(row, "title")
         if not title:
             continue
         out.append(
             FacebookRow(
                 title=str(title).strip(),
-                url=row[col_idx["url"]] or None,
-                posted_at=row[col_idx["posted_at"]],
-                impressions=to_num(row[col_idx["impressions"]]),
-                reach=to_num(row[col_idx["reach"]]),
-                likes=to_num(row[col_idx["likes"]]),
-                comments=to_num(row[col_idx["comments"]]),
-                shares=to_num(row[col_idx["shares"]]),
+                url=cell(row, "url") or None,
+                posted_at=cell(row, "posted_at"),
+                impressions=to_number(cell(row, "impressions")),
+                reach=to_number(cell(row, "reach")),
+                likes=to_number(cell(row, "likes")),
+                comments=to_number(cell(row, "comments")),
+                shares=to_number(cell(row, "shares")),
             )
         )
     return out

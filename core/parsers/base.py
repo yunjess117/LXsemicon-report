@@ -123,6 +123,34 @@ def load_any_tabular(file) -> list[tuple[str, list[list]]]:
     return [("CSV", rows)]
 
 
+def to_number(v):
+    """csv로 읽으면 셀 값이 전부 문자열('1,234')이라 숫자로 바꿔준다.
+    xlsx는 이미 숫자로 오므로 그대로 통과하고, 빈칸·'-'는 None."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    s = str(v).strip().replace(",", "")
+    if not s or s in ("-", "—", "–"):
+        return None
+    try:
+        f = float(s)
+        return int(f) if f.is_integer() else f
+    except ValueError:
+        return None
+
+
+def find_table_with_header(file, required: list[str], max_scan: int = 10):
+    """xlsx/csv 어느 쪽이든 열어서, required 열 이름이 모두 들어있는 헤더 행을 찾는다.
+    (헤더 행, 그 아래 데이터 행들)을 반환한다."""
+    for _, rows in load_any_tabular(file):
+        for i, row in enumerate(rows[:max_scan]):
+            texts = {str(c).strip() for c in row if c is not None}
+            if set(required) <= texts:
+                return row, rows[i + 1 :]
+    return None, None
+
+
 def find_sheet_by_pattern(file, name_regex: str) -> str:
     wb = openpyxl.load_workbook(file, data_only=True, read_only=True)
     for name in wb.sheetnames:
