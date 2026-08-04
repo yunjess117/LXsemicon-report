@@ -334,8 +334,8 @@ with tab_data:
     with bot_r:
         with st.container(key="card_ads"):
             card_title("광고 데이터", "AD 데이터 취합에 사용하는 광고 리포트입니다.")
-            google_file = st.file_uploader("구글애즈 광고 리포트 (CSV, UTF-16)", type=["csv"], key="google_ads")
-            meta_file = st.file_uploader("메타 광고 리포트 (참여/도달/동영상조회/트래픽)", type=["xlsx"], key="meta_ads")
+            google_file = st.file_uploader("구글애즈 광고 리포트", type=["csv", "xlsx"], key="google_ads")
+            meta_file = st.file_uploader("메타 광고 리포트 (참여/도달/동영상조회/트래픽)", type=["xlsx", "csv"], key="meta_ads")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
     raw_missing = []

@@ -31,6 +31,55 @@ def _norm(s) -> str:
     return "".join(str(s).split()).lower()
 
 
+# 같은 시리즈인데 이름이 달리 쓰이는 경우를 하나로 묶는다.
+# (예: 'B급 단장(공통점)' / 'B급 콘텐츠(공통점)' / 'B급 단장 콘텐츠(공통점)')
+SERIES_ALIASES = [("b급", "b급")]
+
+
+def _series_key(title: str) -> str:
+    """제목에서 '시리즈명'만 뽑는다. 날짜 접두를 떼고 괄호 앞부분만 남긴 뒤 별칭을 통일한다.
+    괄호 안 부제는 표기가 달라질 수 있어(예: '세미콘썰(다이어트)' vs
+    '세미콘썰(반도체 다이어트)') 시리즈명 + 발행일이 같으면 같은 콘텐츠로 본다."""
+    t = _strip_date_prefix(str(title))
+    t = t.split("(")[0]
+    key = _norm(t)
+    for prefix, canonical in SERIES_ALIASES:
+        if key.startswith(prefix):
+            return canonical
+    return key
+
+
+def _campaign_month_day(name: str) -> tuple[int, int] | None:
+    """캠페인명 앞의 'YYMMDD_'에서 (월, 일)을 뽑는다."""
+    m = re.match(r"^(\d{2})(\d{2})(\d{2})_", str(name).strip())
+    if not m:
+        return None
+    month, day = int(m.group(2)), int(m.group(3))
+    return (month, day) if 1 <= month <= 12 and 1 <= day <= 31 else None
+
+
+def _publish_month_day(row) -> tuple[int, int] | None:
+    from .formatters import parse_month_day
+
+    return parse_month_day(getattr(row, "date_raw", None))
+
+
+def _same_content(ad_set_name: str, row) -> bool:
+    """광고 캠페인과 발행리스트 행이 같은 콘텐츠인지 판단한다.
+    1) 제목이 서로를 포함하면 같은 것으로 본다.
+    2) 아니면 시리즈명이 같고 발행일까지 같으면 같은 것으로 본다."""
+    norm_guess = _norm(_strip_date_prefix(ad_set_name))
+    norm_title = _norm(row.title)
+    if norm_title and (norm_title in norm_guess or norm_guess in norm_title):
+        return True
+
+    ad_series, row_series = _series_key(ad_set_name), _series_key(row.title)
+    if not ad_series or ad_series != row_series:
+        return False
+    ad_md, row_md = _campaign_month_day(ad_set_name), _publish_month_day(row)
+    return ad_md is not None and ad_md == row_md
+
+
 @dataclass
 class ChannelStats:
     channel: str
@@ -68,11 +117,8 @@ SHEET_COLUMN_MAP = {
 
 
 def _match_content_type(publish_rows: list, ad_set_name: str, log: ConfirmLog, area: str) -> str | None:
-    title_guess = _strip_date_prefix(ad_set_name)
-    norm_guess = _norm(title_guess)
     for row in publish_rows:
-        norm_title = _norm(row.title)
-        if norm_title and (norm_title in norm_guess or norm_guess in norm_title):
+        if _same_content(ad_set_name, row):
             return row.content_type
     log.add(area, ad_set_name, "발행리스트에서 일치하는 콘텐츠를 찾지 못해 캠페인 유형(숏폼/롱폼 등) 비움")
     return None

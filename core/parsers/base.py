@@ -87,16 +87,29 @@ def load_sheet_rows(file, sheet_name: str | None = None) -> tuple[str, list[list
 
 def _sniff_csv_text(file) -> str | None:
     """openpyxl로 열리지 않으면(=xlsx가 아니면) CSV로 보고 텍스트를 읽어본다.
-    회사 도구마다 인코딩이 제각각이라(UTF-8 BOM/UTF-16/EUC-KR) 순서대로 시도한다."""
+    회사 도구마다 인코딩이 제각각이라(UTF-8 BOM/UTF-16/EUC-KR) 순서대로 시도한다.
+
+    UTF-16 파일은 ASCII 사이에 널 바이트가 끼어 있어 utf-8로도 '디코딩은 되지만' 글자
+    사이사이에 \\x00이 들어간 쓰레기 문자열이 나온다. 그래서 BOM을 먼저 보고, 결과에
+    널 문자가 섞이면 실패로 보고 다음 인코딩으로 넘어간다."""
     file.seek(0)
     raw = file.read()
     if isinstance(raw, str):
         return raw
-    for enc in ("utf-8-sig", "utf-16", "cp949", "euc-kr"):
+
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        encodings = ("utf-16", "utf-8-sig", "cp949", "euc-kr")
+    else:
+        encodings = ("utf-8-sig", "utf-16", "cp949", "euc-kr")
+
+    for enc in encodings:
         try:
-            return raw.decode(enc)
+            text = raw.decode(enc)
         except (UnicodeDecodeError, UnicodeError):
             continue
+        if "\x00" in text:
+            continue  # 인코딩을 잘못 고른 것 — 다음 후보로
+        return text
     return None
 
 

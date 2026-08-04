@@ -6,6 +6,7 @@
 """
 
 import datetime
+import re
 from dataclasses import dataclass, field
 
 from openpyxl.workbook import Workbook
@@ -67,13 +68,16 @@ def _filter_rows_by_month(rows: list, target_month: int, area: str, log: Confirm
     return out
 
 
-def _find_campaign_fee(campaign_rows: list[tuple[str, float]] | None, title: str) -> int | None:
-    """(선택) AD 최종본에서 캠페인명에 콘텐츠 제목이 포함된 행을 찾아 캠페인비를 반환한다."""
-    if not campaign_rows or not title:
+def _find_campaign_fee(campaign_rows: list[tuple[str, float]] | None, row) -> int | None:
+    """(선택) AD 최종본에서 이 콘텐츠에 해당하는 캠페인을 찾아 캠페인비를 반환한다.
+    제목 포함 관계로 먼저 보고, 안 맞으면 시리즈명+발행일이 같은지로 판단한다
+    (예: 'B급 단장(공통점)' ≡ 'B급 콘텐츠(공통점)')."""
+    from .ad_data import _same_content
+
+    if not campaign_rows or not getattr(row, "title", None):
         return None
-    norm = _norm_title(title)
     for name, fee in campaign_rows:
-        if norm and norm in _norm_title(name):
+        if _same_content(name, row):
             return roundup_to_10k(fee) if fee is not None else None
     return None
 
@@ -320,7 +324,7 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
             log.add("취합/유튜브_Raw Data", row.title, f"영상 길이({perf.length_sec}초)가 24분을 넘어 h:mm 슬롯으로 표현 불가")
         duration_slot = hms_string_to_hmm_slot(perf.avg_view_duration)
 
-        fee = _find_campaign_fee(campaign_rows, row.title)
+        fee = _find_campaign_fee(campaign_rows, row)
         if fee is None and plan_fee_matcher is not None:
             fee = plan_fee_matcher(row, "취합/유튜브_Raw Data", log)
         if fee is None:
@@ -372,7 +376,7 @@ def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_ro
             )
             continue
 
-        fee = _find_campaign_fee(campaign_rows, row.title)
+        fee = _find_campaign_fee(campaign_rows, row)
         if fee is None and plan_fee_matcher is not None:
             fee = plan_fee_matcher(row, "취합/인스타그램_Raw Data", log)
         if fee is None:
@@ -468,6 +472,19 @@ def _or_confirm(value):
     return value if value is not None else CONFIRM_LABEL
 
 
+def _norm_url(u) -> str | None:
+    """링크 비교용 정규화 — 프로토콜/www/뒤쪽 슬래시/쿼리스트링(?igsh=, ?si= 등)을 떼어낸다."""
+    if not isinstance(u, str):
+        return None
+    s = u.strip()
+    if not s:
+        return None
+    s = s.split("?")[0].split("#")[0]
+    s = re.sub(r"^https?://", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"^www\.", "", s, flags=re.IGNORECASE)
+    return s.rstrip("/").lower() or None
+
+
 def _build_date_index(perf_rows: list) -> dict[datetime.date, list]:
     idx: dict[datetime.date, list] = {}
     for r in perf_rows:
@@ -496,6 +513,21 @@ def match_perf_rows(
     by_date = _build_date_index(perf_rows)
     used: set[int] = set()
     result: dict[int, object] = {}
+
+    # 0단계: 고유 링크가 같으면 가장 확실한 근거이므로 날짜·제목보다 먼저 배정한다.
+    by_url: dict[str, list] = {}
+    for r in perf_rows:
+        u = _norm_url(getattr(r, "url", None))
+        if u:
+            by_url.setdefault(u, []).append(r)
+    for row in publish_rows:
+        u = _norm_url(getattr(row, "url", None))
+        if not u:
+            continue
+        candidates = [c for c in by_url.get(u, []) if id(c) not in used]
+        if len(candidates) == 1:
+            used.add(id(candidates[0]))
+            result[id(row)] = candidates[0]
 
     def center_of(row):
         md = parse_month_day(row.date_raw)
