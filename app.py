@@ -325,7 +325,7 @@ with tab_data:
         with st.container(key="card_content"):
             card_title("콘텐츠 성과", "채널별 발행 콘텐츠의 성과 원본입니다.")
             newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx", "csv"], key="newsroom")
-            yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx"], key="youtube")
+            yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx", "csv"], key="youtube")
             insta_file = st.file_uploader("인스타그램 성과 원본 (메타 콘텐츠 인사이트)", type=["xlsx", "csv"], key="instagram")
             fb_file = st.file_uploader("페이스북 성과 원본 (페이스북 인사이트)", type=["csv", "xlsx"], key="facebook")
             blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx", "csv"], key="blog")
