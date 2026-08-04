@@ -363,6 +363,20 @@ def _block_metric(ws, block, cols: dict[str, str], kind: str):
     return None
 
 
+# 증감률 글자색 — 원본 PPT가 쓰던 값 그대로(상승 빨강 / 하락 파랑)
+CHANGE_UP = "FF0000"
+CHANGE_DOWN = "0070C0"
+CHANGE_NONE = "808080"  # '확인 필요'가 템플릿의 파란색을 물려받아 하락처럼 보이지 않도록
+
+
+def _change_color(text: str) -> str | None:
+    if text.startswith("▲"):
+        return CHANGE_UP
+    if text.startswith("▼"):
+        return CHANGE_DOWN
+    return None
+
+
 def _pct_change(prev, cur) -> str:
     """전월 대비 증감률. 원본 표기(▲/▼, 소수 1자리)를 그대로 따른다."""
     if prev is None or cur is None or prev == 0:
@@ -514,10 +528,10 @@ def _fill_inflow_tables(slides, raw_wb, month: int, rec: _Recorder) -> None:
                 # 전월 값은 템플릿에서 이어받아 살려두고, 당월/증감률만 확인 필요로 남긴다.
                 set_cell_text(tbl.cell(ri, 1), prev_text or CONFIRM_LABEL)
                 set_cell_text(tbl.cell(ri, 2), CONFIRM_LABEL)
-                set_cell_text(tbl.cell(ri, 3), CONFIRM_LABEL)
+                set_cell_text(tbl.cell(ri, 3), CONFIRM_LABEL, color=CHANGE_NONE)
                 if has_cumulative:
                     set_cell_text(tbl.cell(ri, 4), CONFIRM_LABEL)
-                    set_cell_text(tbl.cell(ri, 5), CONFIRM_LABEL)
+                    set_cell_text(tbl.cell(ri, 5), CONFIRM_LABEL, color=CHANGE_NONE)
                 todo.append(label)
                 continue
 
@@ -526,17 +540,19 @@ def _fill_inflow_tables(slides, raw_wb, month: int, rec: _Recorder) -> None:
                 prev = _num(prev_text)  # 엑셀에서 못 구하면 템플릿 값으로 대체
             set_cell_text(tbl.cell(ri, 1), f"{prev:.2f}%" if (is_rate and prev is not None) else (_fmt_num(prev) if prev is not None else (prev_text or CONFIRM_LABEL)))
             set_cell_text(tbl.cell(ri, 2), f"{cur:.2f}%" if is_rate else _fmt_num(cur))
-            set_cell_text(tbl.cell(ri, 3), _pp_change(prev, cur) if is_rate else _pct_change(prev, cur))
+            change = _pp_change(prev, cur) if is_rate else _pct_change(prev, cur)
+            set_cell_text(tbl.cell(ri, 3), change, color=_change_color(change))
 
             if has_cumulative:
                 series = _monthly_series(raw_wb, monthly_key, month) if monthly_key else _content_series(raw_wb, channel, label, month)
                 if series:
                     avg = sum(series) / len(series)
+                    cum_change = _pct_change(avg, cur)
                     set_cell_text(tbl.cell(ri, 4), _fmt_num(_round_half_up(avg)))
-                    set_cell_text(tbl.cell(ri, 5), _pct_change(avg, cur))
+                    set_cell_text(tbl.cell(ri, 5), cum_change, color=_change_color(cum_change))
                 else:
                     set_cell_text(tbl.cell(ri, 4), CONFIRM_LABEL)
-                    set_cell_text(tbl.cell(ri, 5), CONFIRM_LABEL)
+                    set_cell_text(tbl.cell(ri, 5), CONFIRM_LABEL, color=CHANGE_NONE)
             done.append(label)
 
         if done:

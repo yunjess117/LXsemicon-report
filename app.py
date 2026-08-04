@@ -129,7 +129,9 @@ st.markdown(
     [data-testid="stFileUploaderDropzoneInstructions"] span {{
         font-size: 0.72rem; color: #9CA3AF; line-height: 1.3;
     }}
-    [data-testid="stFileUploaderDropzone"] button [data-testid="stIconMaterial"] {{ display: none; }}
+    [data-testid="stFileUploaderDropzone"] button [data-testid="stIconMaterial"] {{
+        font-size: 1rem; margin-right: 0.1rem;
+    }}
     [data-testid="stFileUploaderDropzone"] button {{
         background: #fff; color: {TEXT_BODY};
         border: 1px solid #D1D5DB; border-radius: 6px;
@@ -139,6 +141,15 @@ st.markdown(
     [data-testid="stFileUploaderDropzone"] button:hover {{
         background: #F9FAFB; color: {TEXT_TITLE}; border-color: #9CA3AF;
     }}
+
+    /* PPT 생성 시 채우는 항목 안내 */
+    .ppt-scope {{
+        font-size: 0.84rem; color: {TEXT_BODY}; line-height: 1.55;
+        background: {CARD_BG}; border: 1px solid {CARD_BORDER};
+        border-radius: 8px; padding: 0.8rem 1rem 0.85rem 1rem; margin-bottom: 0.9rem;
+    }}
+    .ppt-scope ol {{ margin: 0.45rem 0 0 1.1rem; padding: 0; }}
+    .ppt-scope li {{ margin-bottom: 0.2rem; color: {TEXT_MUTED}; }}
 
     /* 채운 내역 — 채움은 초록, 확인 필요는 주황으로 구분 */
     .fill-channel {{
@@ -609,6 +620,16 @@ with tab_ppt:
     )
 
     section_header("3", "PPT 생성", "채운 내역과 확인 필요 항목을 확인한 뒤 내려받으세요.", SECTION_RUN)
+    st.markdown(
+        '<div class="ppt-scope">채널별(뉴스룸 · 유튜브 · 인스타그램 · 페이스북 · 블로그)로 '
+        '아래 세 가지 표를 PPT에 입력합니다.'
+        '<ol>'
+        '<li>운영 개요 &gt; 유입데이터 분석 표 — 전월/당월 값과 전월 대비 증감률</li>'
+        '<li>콘텐츠 운영 내역 표 — 콘텐츠 제목에 발행 URL 하이퍼링크 포함</li>'
+        '<li>캠페인 운영 개요 &gt; 캠페인 운영 요약 표 — 유튜브 동영상조회, 인스타 참여·도달·동영상조회</li>'
+        '</ol></div>',
+        unsafe_allow_html=True,
+    )
     with st.container(key="btn_ppt"):
         ppt_process = st.button(
             "월간보고서 PPT 생성", disabled=bool(ppt_required_missing), key="ppt_process", use_container_width=True

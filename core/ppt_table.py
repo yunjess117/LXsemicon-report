@@ -5,6 +5,7 @@
 
 import copy
 
+from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 from pptx.table import Table
 
@@ -61,9 +62,10 @@ def _tr_list(tbl: Table):
     return tbl._tbl.findall(qn("a:tr"))
 
 
-def set_cell_text(cell, text: str, url: str | None = None) -> None:
+def set_cell_text(cell, text: str, url: str | None = None, color: str | None = None) -> None:
     """셀의 첫 번째 run 서식은 유지한 채 텍스트만 바꾼다. 나머지 run/문단은 지운다.
-    url을 주면 그 run에 하이퍼링크를 걸어 표에서 바로 콘텐츠로 이동할 수 있게 한다."""
+    url을 주면 그 run에 하이퍼링크를 걸어 표에서 바로 콘텐츠로 이동할 수 있게 한다.
+    color('FF0000' 같은 6자리 hex)를 주면 글자 색을 바꾼다."""
     tf = cell.text_frame
     if not tf.paragraphs:
         cell.text = text
@@ -83,6 +85,12 @@ def set_cell_text(cell, text: str, url: str | None = None) -> None:
             para.runs[0].hyperlink.address = url
         except Exception:
             pass  # 링크를 못 걸어도 표 내용 자체는 그대로 두는 편이 안전하다
+
+    if color and para.runs:
+        try:
+            para.runs[0].font.color.rgb = RGBColor.from_string(color)
+        except Exception:
+            pass
 
 
 def sync_table_rows(
