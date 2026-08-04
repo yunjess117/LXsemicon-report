@@ -17,8 +17,59 @@ from .excel_block import find_month_blocks
 from .ppt_table import fill_data_rows, fill_footer_row, find_table_by_header, sync_table_rows
 
 
+CONFIRM_LABEL = "⚠ 확인 필요"
+
+
 def _norm(s) -> str:
     return "".join(str(s).split()).lower()
+
+
+def _num(v) -> float | None:
+    """계산에 쓸 수 있는 값만 숫자로 돌려주고, 그 외는 None.
+
+    로우데이터 셀에는 숫자만 들어있지 않다 — 채우지 못한 칸은 '⚠ 확인 필요',
+    광고 미집행은 '-', 수기 입력·csv 유래 값은 '1,234'처럼 콤마나 공백이 섞인 문자열일 수
+    있다. 이런 값을 숫자처럼 더하면 TypeError가 나므로 여기서 한 번에 걸러낸다."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    s = str(v).strip().replace(",", "").replace(" ", "").replace("%", "")
+    if not s or s in ("-", "—", "–") or CONFIRM_LABEL.replace(" ", "") in s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _agg(values: list) -> tuple[str, str]:
+    """열 하나의 (합계 표시값, 평균 표시값)을 만든다.
+
+    하나라도 숫자로 읽지 못하면(확인 필요/빈칸 등) 합계·평균을 임의로 계산하지 않고
+    둘 다 '확인 필요'로 남긴다 — 일부 행이 빠진 합계를 그대로 보고서에 실으면
+    맞아 보이지만 틀린 숫자가 되기 때문이다."""
+    nums = []
+    for v in values:
+        n = _num(v)
+        if n is None:
+            return CONFIRM_LABEL, CONFIRM_LABEL
+        nums.append(n)
+    if not nums:
+        return "", ""
+    total = sum(nums)
+    return _fmt_num(total), _fmt_num(_round_half_up(total / len(nums)))
+
+
+def _row_total(*values) -> float | str | None:
+    """한 행 안에서 여러 열을 더한 값(총 반응 등). 하나라도 못 읽으면 '확인 필요'."""
+    nums = []
+    for v in values:
+        n = _num(v)
+        if n is None:
+            return CONFIRM_LABEL
+        nums.append(n)
+    return sum(nums)
 
 
 def _fmt_num(v) -> str:
@@ -162,6 +213,17 @@ def build_ppt_report(
     return PptReportResult(presentation=prev_ppt, confirm=log, filled_tables=filled)
 
 
+def _log_if_unresolved(log: ConfirmLog, label: str, columns: dict[str, str]) -> None:
+    """합계/평균이 '확인 필요'로 남은 열을 체크리스트에 모아 알려준다."""
+    unresolved = [name for name, value in columns.items() if value == CONFIRM_LABEL]
+    if unresolved:
+        log.add(
+            "PPT/" + label, "TOTAL·평균",
+            f"{', '.join(unresolved)} 열에 숫자로 읽을 수 없는 값(확인 필요·빈칸 등)이 있어 "
+            "합계·평균을 계산하지 않았습니다. 로우데이터에서 해당 값을 채운 뒤 다시 만들어주세요.",
+        )
+
+
 def _last_block_rows(raw_wb, sheet_name, cols):
     if raw_wb is None or sheet_name not in raw_wb.sheetnames:
         return None
@@ -187,10 +249,10 @@ def _fill_newsroom(slides, raw_wb, log, filled):
         tbl,
         [[str(i + 1), str(r["date"] or ""), str(r["cat"] or ""), str(r["title"] or ""), str(r["type"] or ""), _fmt_num(r["views"])] for i, r in enumerate(rows)],
     )
-    total = sum(r["views"] or 0 for r in rows)
-    avg = _round_half_up(total / len(rows)) if rows else 0
-    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", 5: _fmt_num(total)})
-    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", 5: _fmt_num(avg)})
+    total, avg = _agg([r["views"] for r in rows])
+    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", 5: total})
+    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", 5: avg})
+    _log_if_unresolved(log, label, {"조회수": total})
     filled.append(SlideFillResult(label, True, n_rows=len(rows)))
 
 
@@ -209,19 +271,16 @@ def _fill_youtube(slides, raw_wb, ad_wb, log, filled):
         return
 
     table_rows = []
-    total_views = total_campaign_views = total_react = total_fee = 0
+    views, campaign_views_all, reactions, fees = [], [], [], []
     lengths, avg_durs = [], []
-    any_fee_missing = False
     for i, r in enumerate(rows):
         campaign_views, ad_fee = _find_ad_fee_and_views(ad_wb, "유튜브_캠페인", r["title"] or "")
-        fee = r["fee"] if r["fee"] is not None else ad_fee
-        reaction = (r["likes"] or 0) + (r["comments"] or 0) + (r["shares"] or 0)
-        total_views += r["views"] or 0
-        total_campaign_views += campaign_views or 0
-        total_react += reaction
-        total_fee += fee or 0
-        if fee is None:
-            any_fee_missing = True
+        fee = r["fee"] if _num(r["fee"]) is not None else ad_fee
+        reaction = _row_total(r["likes"], r["comments"], r["shares"])
+        views.append(r["views"])
+        campaign_views_all.append(campaign_views)
+        reactions.append(reaction)
+        fees.append(fee)
         lengths.append(r["length"])
         avg_durs.append(r["avg_dur"])
         table_rows.append(
@@ -234,19 +293,24 @@ def _fill_youtube(slides, raw_wb, ad_wb, log, filled):
         )
     sync_table_rows(tbl, len(rows), header_rows=1, footer_rows=2)
     fill_data_rows(tbl, table_rows)
-    n = len(rows) or 1
-    avg_views = _round_half_up(total_views / n) if rows else 0
-    avg_campaign_views = _round_half_up(total_campaign_views / n) if rows else 0
-    avg_react = _round_half_up(total_react / n) if rows else 0
+
+    total_views, avg_views = _agg(views)
+    total_cv, avg_cv = _agg(campaign_views_all)
+    total_react, avg_react = _agg(reactions)
+    total_fee, _ = _agg(fees)
     avg_length = _avg_time_slot(lengths)
     avg_dur = _avg_time_slot(avg_durs)
     fill_footer_row(
         tbl, 1 + len(rows),
-        {0: "TOTAL", 4: _fmt_num(total_views), 5: _fmt_num(total_campaign_views), 8: "", 9: _fmt_num(total_react), 10: _fmt_num(total_fee) if not any_fee_missing else ""},
+        {0: "TOTAL", 4: total_views, 5: total_cv, 8: "", 9: total_react, 10: total_fee},
     )
     fill_footer_row(
         tbl, 1 + len(rows) + 1,
-        {0: "평균", 4: _fmt_num(avg_views), 5: _fmt_num(avg_campaign_views), 6: _fmt_time_slot(avg_length), 7: _fmt_time_slot(avg_dur), 9: _fmt_num(avg_react)},
+        {0: "평균", 4: avg_views, 5: avg_cv, 6: _fmt_time_slot(avg_length), 7: _fmt_time_slot(avg_dur), 9: avg_react},
+    )
+    _log_if_unresolved(
+        log, label,
+        {"조회수": total_views, "캠페인 조회수": total_cv, "총반응": total_react, "캠페인비": total_fee},
     )
     filled.append(SlideFillResult(label, True, n_rows=len(rows)))
     log.add("PPT/" + label, "캠페인/조회수·평균조회율", "AD 매칭이 안 된 항목은 비어 있을 수 있어 직접 확인 필요")
@@ -271,19 +335,26 @@ def _fill_instagram(slides, raw_wb, ad_wb, log, filled):
         return
 
     table_rows = []
-    sums = [0, 0, 0, 0, 0]  # reach, likes, comments, saves, shares
+    keys = ["reach", "likes", "comments", "saves", "shares"]
+    cols: dict[str, list] = {k: [] for k in keys}
     for i, r in enumerate(rows):
-        vals = [r["reach"] or 0, r["likes"] or 0, r["comments"] or 0, r["saves"] or 0, r["shares"] or 0]
-        sums = [a + b for a, b in zip(sums, vals)]
+        for k in keys:
+            cols[k].append(r[k])
         table_rows.append(
             [str(i + 1), str(r["date"] or ""), str(r["cat"] or ""), str(r["title"] or ""), str(r["type"] or ""),
              _fmt_num(r["reach"]), _fmt_num(r["likes"]), _fmt_num(r["comments"]), _fmt_num(r["saves"]), _fmt_num(r["shares"]), _fmt_num(r["fee"])]
         )
     sync_table_rows(tbl, len(rows), header_rows=1, footer_rows=2)
     fill_data_rows(tbl, table_rows)
-    n = len(rows) or 1
-    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", 5: _fmt_num(sums[0]), 6: _fmt_num(sums[1]), 7: _fmt_num(sums[2]), 8: _fmt_num(sums[3]), 9: _fmt_num(sums[4])})
-    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", 5: _fmt_num(_round_half_up(sums[0] / n)), 6: _fmt_num(_round_half_up(sums[1] / n)), 7: _fmt_num(_round_half_up(sums[2] / n)), 8: _fmt_num(_round_half_up(sums[3] / n)), 9: _fmt_num(_round_half_up(sums[4] / n))})
+
+    agg = {k: _agg(cols[k]) for k in keys}
+    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", **{5 + i: agg[k][0] for i, k in enumerate(keys)}})
+    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", **{5 + i: agg[k][1] for i, k in enumerate(keys)}})
+    _log_if_unresolved(
+        log, label,
+        {"총 도달": agg["reach"][0], "좋아요": agg["likes"][0], "댓글": agg["comments"][0],
+         "저장": agg["saves"][0], "공유": agg["shares"][0]},
+    )
     filled.append(SlideFillResult(label, True, n_rows=len(rows)))
 
 
@@ -302,19 +373,26 @@ def _fill_facebook(slides, raw_wb, log, filled):
         return
 
     table_rows = []
-    sums = [0, 0, 0, 0]  # reach, shares, likes, comments
+    keys = ["reach", "shares", "likes", "comments"]
+    cols: dict[str, list] = {k: [] for k in keys}
     for i, r in enumerate(rows):
-        vals = [r["reach"] or 0, r["shares"] or 0, r["likes"] or 0, r["comments"] or 0]
-        sums = [a + b for a, b in zip(sums, vals)]
+        for k in keys:
+            cols[k].append(r[k])
         table_rows.append(
             [str(i + 1), str(r["date"] or ""), str(r["cat"] or ""), str(r["title"] or ""), str(r["type"] or ""),
              _fmt_num(r["reach"]), _fmt_num(r["shares"]), _fmt_num(r["likes"]), _fmt_num(r["comments"]), str(r["fee"] or "-")]
         )
     sync_table_rows(tbl, len(rows), header_rows=1, footer_rows=2)
     fill_data_rows(tbl, table_rows)
-    n = len(rows) or 1
-    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", 5: _fmt_num(sums[0]), 6: _fmt_num(sums[1]), 7: _fmt_num(sums[2]), 8: _fmt_num(sums[3])})
-    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", 5: _fmt_num(_round_half_up(sums[0] / n)), 6: _fmt_num(_round_half_up(sums[1] / n)), 7: _fmt_num(_round_half_up(sums[2] / n)), 8: _fmt_num(_round_half_up(sums[3] / n))})
+
+    agg = {k: _agg(cols[k]) for k in keys}
+    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", **{5 + i: agg[k][0] for i, k in enumerate(keys)}})
+    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", **{5 + i: agg[k][1] for i, k in enumerate(keys)}})
+    _log_if_unresolved(
+        log, label,
+        {"콘텐츠 도달수": agg["reach"][0], "공유수": agg["shares"][0],
+         "좋아요수": agg["likes"][0], "댓글수": agg["comments"][0]},
+    )
     filled.append(SlideFillResult(label, True, n_rows=len(rows)))
 
 
@@ -330,17 +408,20 @@ def _fill_blog(slides, raw_wb, log, filled):
         return
 
     table_rows = []
-    total_views = total_react = 0
+    views, reactions = [], []
     for i, r in enumerate(rows):
-        reaction = (r["likes"] or 0) + (r["comments"] or 0)
-        total_views += r["views"] or 0
-        total_react += reaction
+        reaction = _row_total(r["likes"], r["comments"])
+        views.append(r["views"])
+        reactions.append(reaction)
         table_rows.append([str(i + 1), str(r["date"] or ""), str(r["cat"] or ""), str(r["title"] or ""), str(r["type"] or ""), _fmt_num(r["views"]), _fmt_num(reaction)])
     sync_table_rows(tbl, len(rows), header_rows=1, footer_rows=2)
     fill_data_rows(tbl, table_rows)
-    n = len(rows) or 1
-    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", 5: _fmt_num(total_views), 6: _fmt_num(total_react)})
-    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", 5: _fmt_num(_round_half_up(total_views / n)), 6: _fmt_num(_round_half_up(total_react / n))})
+
+    total_views, avg_views = _agg(views)
+    total_react, avg_react = _agg(reactions)
+    fill_footer_row(tbl, 1 + len(rows), {0: "TOTAL", 5: total_views, 6: total_react})
+    fill_footer_row(tbl, 1 + len(rows) + 1, {0: "평균", 5: avg_views, 6: avg_react})
+    _log_if_unresolved(log, label, {"조회수": total_views, "총 반응": total_react})
     filled.append(SlideFillResult(label, True, n_rows=len(rows)))
 
 
