@@ -31,7 +31,7 @@ from core.parsers.youtube_studio import parse_youtube_studio
 from core.ppt_report import build_ppt_report
 from core.raw_data import SHEET_NAMES, build_raw_data
 
-st.set_page_config(page_title="LX세미콘 월간 리포트 자동화", page_icon="📊", layout="wide")
+st.set_page_config(page_title="LX세미콘 월간 리포트 취합 프로그램", page_icon="📊", layout="wide")
 
 PAGE_BG = "#F8FAFC"
 CARD_BG = "#FFFFFF"
@@ -278,7 +278,7 @@ def render_result(out: dict) -> None:
     )
 
 
-st.title("LX세미콘 월간 리포트 자동화")
+st.title("LX세미콘 월간 리포트 취합 프로그램")
 st.caption("매달 원본 자료를 업로드하면 로우데이터(취합)·AD 엑셀과 월간보고서 PPT를 만들어줍니다.")
 st.caption("🔒 업로드한 파일은 서버에 저장되지 않고 메모리에서만 처리되며, 세션이 끝나면 함께 사라집니다.")
 st.caption("⚠ 판단이 애매하거나 원본에 없는 값은 임의로 채우지 않고 '확인 필요'로 표시합니다. 직접 확인 후 채워주세요.")
@@ -327,7 +327,7 @@ with tab_data:
             newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx", "csv"], key="newsroom")
             yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx"], key="youtube")
             insta_file = st.file_uploader("인스타그램 성과 원본 (메타 콘텐츠 인사이트)", type=["xlsx", "csv"], key="instagram")
-            fb_file = st.file_uploader("페이스북 성과 원본 (페이스북 인사이트)", type=["csv", "xlsx"], key="facebook")
+            fb_file = st.file_uploader("페이스북 성과 원본 (메타 콘텐츠 인사이트)", type=["csv", "xlsx"], key="facebook")
             blog_file = st.file_uploader("블로그 실적 원본 (네이버 블로그 통계)", type=["xlsx", "csv"], key="blog")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
