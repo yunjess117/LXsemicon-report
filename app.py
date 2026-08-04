@@ -33,46 +33,58 @@ from core.raw_data import SHEET_NAMES, build_raw_data
 
 st.set_page_config(page_title="LX세미콘 월간 리포트 자동화", page_icon="📊", layout="wide")
 
-BLUE, BLUE_BG = "#3B82F6", "#EFF6FF"       # 전월 로우데이터(취합) 최종본
-PURPLE, PURPLE_BG = "#A855F7", "#FAF5FF"   # 전월 로우데이터 AD 최종본
-AMBER, AMBER_BG = "#F59E0B", "#FFFBEB"     # 이번 달 입력 데이터
-GREEN, GREEN_BG = "#22C55E", "#F0FDF4"     # 콘텐츠 성과
-ORANGE, ORANGE_BG = "#F97316", "#FFF7ED"   # 광고 데이터
-MUTED = "#94A3B8"
+PAGE_BG = "#F8FAFC"
+CARD_BG = "#FFFFFF"
+CARD_BORDER = "#E5E7EB"
+TEXT_TITLE = "#111827"
+TEXT_MUTED = "#6B7280"
 
-PANELS = {
-    "prev_raw": (BLUE, BLUE_BG),
-    "prev_ad": (PURPLE, PURPLE_BG),
-    "input": (AMBER, AMBER_BG),
-    "content": (GREEN, GREEN_BG),
-    "ads": (ORANGE, ORANGE_BG),
-}
-_panel_css = "\n".join(
-    f".st-key-panel_{k} {{ background: {bg}; border-color: {accent}; }}\n"
-    f".st-key-panel_{k} .panel-heading {{ color: {accent}; border-left-color: {accent}; }}"
-    for k, (accent, bg) in PANELS.items()
-)
-_panel_selectors = ", ".join(f".st-key-panel_{k}" for k in PANELS)
+# 구역 구분은 카드 배경색이 아니라 '제목 좌측 컬러바'로만 한다.
+BAR_PREV_RAW = "#2563EB"  # 전월 로우데이터(취합)
+BAR_PREV_AD = "#7C3AED"   # 전월 로우데이터 AD
+BAR_INPUT = "#F59E0B"     # 이번 달 입력 데이터
+BAR_CONTENT = "#10B981"   # 콘텐츠 성과
+BAR_ADS = "#EF4444"       # 광고 데이터
+
+CARD_KEYS = ["card_prev", "card_input", "card_content", "card_ads"]
+_card_selectors = ", ".join(f".st-key-{k}" for k in CARD_KEYS)
 
 st.markdown(
     f"""
     <style>
-    /* 업로드 구역 패널 — 구역마다 배경/테두리 색을 다르게 해 경계를 명확히 */
-    {_panel_selectors} {{
-        border-radius: 14px;
-        border-style: solid;
-        border-width: 3px;
-        padding: 1.1rem 1.25rem 0.7rem 1.25rem;
+    .stApp {{ background: {PAGE_BG}; }}
+
+    /* 업로드 카드 — 흰 배경 + 연한 테두리 (배경 전체를 색칠하지 않는다) */
+    {_card_selectors} {{
+        background: {CARD_BG};
+        border: 1px solid {CARD_BORDER};
+        border-radius: 12px;
+        padding: 1.25rem 1.4rem 0.85rem 1.4rem;
         height: 100%;
     }}
-    {_panel_css}
 
-    /* 패널 안 소제목 */
-    .panel-heading {{
-        font-weight: 800; font-size: 1rem; letter-spacing: -0.01em;
-        margin: 0.1rem 0 0.75rem 0; padding-left: 0.6rem;
-        border-left: 5px solid;
+    /* 카드 제목 — 좌측 컬러바만으로 구역을 구분 */
+    .card-title {{
+        font-size: 1.02rem; font-weight: 700; color: {TEXT_TITLE};
+        letter-spacing: -0.01em; line-height: 1.3;
+        margin: 0.1rem 0 0.9rem 0; padding-left: 0.7rem;
+        border-left: 4px solid;
     }}
+    .card-title + .card-note {{ margin-top: -0.6rem; }}
+    .card-note {{ font-size: 0.82rem; color: {TEXT_MUTED}; margin: 0 0 0.9rem 0.7rem; }}
+
+    /* 전월 최종본 카드 안의 두 항목 — 각각 다른 컬러바 */
+    .st-key-sub_prev_raw, .st-key-sub_prev_ad {{ padding-left: 0.7rem; border-left: 4px solid; }}
+    .st-key-sub_prev_raw {{ border-left-color: {BAR_PREV_RAW}; }}
+    .st-key-sub_prev_ad  {{ border-left-color: {BAR_PREV_AD}; margin-top: 0.9rem; }}
+
+    /* 섹션 제목 (📊 채널 원본 데이터) */
+    .section-title {{
+        font-size: 1.5rem; font-weight: 800; color: {TEXT_TITLE};
+        letter-spacing: -0.02em; margin: 0.4rem 0 0.15rem 0;
+    }}
+    .section-sub {{ font-size: 0.86rem; color: {TEXT_MUTED}; margin: 0 0 0.9rem 0; }}
+
     .panel-gap {{ height: 0.9rem; }}
 
     /* 실행 버튼 — 화면에서 가장 눈에 띄도록 크게, 알약 모양, 그림자 */
@@ -91,37 +103,27 @@ st.markdown(
         line-height: 1.2;
     }}
     .st-key-btn_raw button {{
-        background: linear-gradient(135deg, #60A5FA 0%, {BLUE} 55%, #2563EB 100%);
-        box-shadow: 0 12px 26px {BLUE}59, 0 2px 6px {BLUE}40;
+        background: linear-gradient(135deg, #3B82F6 0%, {BAR_PREV_RAW} 55%, #1D4ED8 100%);
+        box-shadow: 0 12px 26px {BAR_PREV_RAW}59, 0 2px 6px {BAR_PREV_RAW}40;
     }}
     .st-key-btn_ad button {{
-        background: linear-gradient(135deg, #C084FC 0%, {PURPLE} 55%, #7E22CE 100%);
-        box-shadow: 0 12px 26px {PURPLE}59, 0 2px 6px {PURPLE}40;
+        background: linear-gradient(135deg, #A855F7 0%, {BAR_PREV_AD} 55%, #6D28D9 100%);
+        box-shadow: 0 12px 26px {BAR_PREV_AD}59, 0 2px 6px {BAR_PREV_AD}40;
     }}
     .st-key-btn_raw button:hover:enabled, .st-key-btn_ad button:hover:enabled {{
         transform: translateY(-3px);
         filter: brightness(1.06);
         color: #fff;
     }}
-    .st-key-btn_raw button:hover:enabled {{ box-shadow: 0 18px 34px {BLUE}66, 0 3px 8px {BLUE}4D; }}
-    .st-key-btn_ad button:hover:enabled  {{ box-shadow: 0 18px 34px {PURPLE}66, 0 3px 8px {PURPLE}4D; }}
+    .st-key-btn_raw button:hover:enabled {{ box-shadow: 0 18px 34px {BAR_PREV_RAW}66, 0 3px 8px {BAR_PREV_RAW}4D; }}
+    .st-key-btn_ad button:hover:enabled  {{ box-shadow: 0 18px 34px {BAR_PREV_AD}66, 0 3px 8px {BAR_PREV_AD}4D; }}
     .st-key-btn_raw button:active:enabled, .st-key-btn_ad button:active:enabled {{
         transform: translateY(-1px);
     }}
     .st-key-btn_raw button:disabled, .st-key-btn_ad button:disabled {{
-        background: #E2E8F0; color: {MUTED}; box-shadow: none;
+        background: #E5E7EB; color: {TEXT_MUTED}; box-shadow: none;
     }}
-    .st-key-btn_raw button:disabled p, .st-key-btn_ad button:disabled p {{ color: {MUTED}; }}
-
-    /* 두 버튼 사이 연결 표시 */
-    .btn-link {{
-        display: flex; align-items: center; justify-content: center;
-        min-height: 5rem; color: {MUTED};
-    }}
-    .btn-link span {{ font-size: 1.6rem; line-height: 1; }}
-    .btn-link::before, .btn-link::after {{
-        content: ""; flex: 1; height: 2px; background: {MUTED}59; margin: 0 0.4rem;
-    }}
+    .st-key-btn_raw button:disabled p, .st-key-btn_ad button:disabled p {{ color: {TEXT_MUTED}; }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -154,9 +156,13 @@ if not check_password():
     st.stop()
 
 
-def heading(text: str) -> None:
-    """패널 안 소제목. 색은 패널 컨테이너 키에 따라 CSS가 알아서 입힌다."""
-    st.markdown(f'<div class="panel-heading">{text}</div>', unsafe_allow_html=True)
+def card_title(text: str, bar: str, note: str | None = None) -> None:
+    """카드 제목. 구역 구분은 좌측 컬러바로만 한다(카드 배경은 항상 흰색)."""
+    st.markdown(
+        f'<div class="card-title" style="border-left-color:{bar}">{text}</div>'
+        + (f'<div class="card-note">{note}</div>' if note else ""),
+        unsafe_allow_html=True,
+    )
 
 
 def render_result(out: dict) -> None:
@@ -216,29 +222,32 @@ with tab_data:
 
     top_l, top_r = st.columns(2)
     with top_l:
-        with st.container(key="panel_prev_raw"):
-            heading("전월 최종본 · 취합")
-            prev_fn_file = st.file_uploader("★ 전월 로우데이터(취합) 최종본 (_fn.xlsx)", type=["xlsx"], key="prev_raw_fn")
-            st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
-    with top_r:
-        with st.container(key="panel_prev_ad"):
-            heading("전월 최종본 · AD")
-            ad_prev_fn_file = st.file_uploader("★ 전월 로우데이터 AD 최종본 (_fn.xlsx)", type=["xlsx"], key="prev_ad_fn")
+        with st.container(key="card_prev"):
+            card_title("전월 최종본", BAR_PREV_RAW, "이번 달 블록을 이어붙일 기준 파일입니다.")
+            with st.container(key="sub_prev_raw"):
+                prev_fn_file = st.file_uploader("★ 전월 로우데이터(취합) 최종본 (_fn.xlsx)", type=["xlsx"], key="prev_raw_fn")
+            with st.container(key="sub_prev_ad"):
+                ad_prev_fn_file = st.file_uploader("★ 전월 로우데이터 AD 최종본 (_fn.xlsx)", type=["xlsx"], key="prev_ad_fn")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
-    st.markdown("")
-    bot_l, bot_m, bot_r = st.columns(3)
-    with bot_l:
-        with st.container(key="panel_input"):
-            heading("이번 달 입력 데이터")
+    with top_r:
+        with st.container(key="card_input"):
+            card_title("이번 달 입력 데이터", BAR_INPUT, "발행리스트·캠페인 플랜은 한 번만 올리면 양쪽에서 함께 씁니다.")
             publish_list_file = st.file_uploader("★ 이번 달 콘텐츠 발행리스트", type=["xlsx", "xls"], key="publish_list")
             plan_file = st.file_uploader("이번 달 캠페인 플랜 (캠페인비·집행 기간 매칭용)", type=["xlsx"], key="campaign_plan")
             daily_follower_file = st.file_uploader("(선택) 채널별 팔로워·구독자 Daily data", type=["xlsx"], key="daily_follower")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
-    with bot_m:
-        with st.container(key="panel_content"):
-            heading("콘텐츠 성과")
+    st.markdown(
+        '<div class="section-title">📊 채널 원본 데이터</div>'
+        '<div class="section-sub">채널별 성과 및 광고 데이터를 업로드하세요</div>',
+        unsafe_allow_html=True,
+    )
+
+    bot_l, bot_r = st.columns(2)
+    with bot_l:
+        with st.container(key="card_content"):
+            card_title("콘텐츠 성과", BAR_CONTENT)
             newsroom_file = st.file_uploader("뉴스룸 콘텐츠별 조회수 원본 (GA)", type=["xlsx", "csv"], key="newsroom")
             yt_file = st.file_uploader("유튜브 스튜디오 내보내기", type=["xlsx"], key="youtube")
             insta_file = st.file_uploader("인스타그램 성과 원본 (메타 콘텐츠 인사이트)", type=["xlsx"], key="instagram")
@@ -247,8 +256,8 @@ with tab_data:
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
 
     with bot_r:
-        with st.container(key="panel_ads"):
-            heading("광고 데이터")
+        with st.container(key="card_ads"):
+            card_title("광고 데이터", BAR_ADS)
             google_file = st.file_uploader("구글애즈 광고 리포트 (CSV, UTF-16)", type=["csv"], key="google_ads")
             meta_file = st.file_uploader("메타 광고 리포트 (참여/도달/동영상조회/트래픽)", type=["xlsx"], key="meta_ads")
             st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
@@ -287,21 +296,20 @@ with tab_data:
         )
 
     st.markdown("")
-    btn_l, btn_mid, btn_r = st.columns([6, 1, 6])
+    # 두 처리는 순서와 무관하게 독립 실행되므로 사이에 화살표를 두지 않는다.
+    btn_l, btn_r = st.columns(2)
     with btn_l:
         with st.container(key="btn_raw"):
             run_raw = st.button(
                 "📊 로우데이터 취합", disabled=bool(raw_missing), key="do_raw", use_container_width=True
             )
-    with btn_mid:
-        st.markdown('<div class="btn-link"><span>→</span></div>', unsafe_allow_html=True)
     with btn_r:
         with st.container(key="btn_ad"):
             run_ad = st.button(
                 "📣 AD 데이터 취합", disabled=bool(ad_missing), key="do_ad", use_container_width=True
             )
 
-    warn_l, _, warn_r = st.columns([6, 1, 6])
+    warn_l, warn_r = st.columns(2)
     with warn_l:
         if raw_missing:
             st.warning("⚠ 필수 파일 없음: " + ", ".join(raw_missing))
