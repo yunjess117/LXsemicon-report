@@ -39,8 +39,12 @@ CARD_BORDER = "#E5E7EB"
 TEXT_TITLE = "#111827"
 TEXT_BODY = "#374151"
 TEXT_MUTED = "#6B7280"
-ACCENT = "#2563EB"   # 유일한 포인트 컬러 — 섹션 번호에만 사용
 ACTION = "#111827"   # 실행 버튼
+
+# 섹션마다 다른 색. 번호 배지와 제목 텍스트가 같은 색을 쓴다.
+SECTION_INPUT = "#2563EB"    # ① 입력 파일
+SECTION_SOURCE = "#059669"   # ② 채널 원본 데이터
+SECTION_RUN = "#7C3AED"      # ③ 취합 실행
 
 CARD_KEYS = ["card_prev", "card_input", "card_content", "card_ads"]
 _card_selectors = ", ".join(f".st-key-{k}" for k in CARD_KEYS)
@@ -63,14 +67,15 @@ st.markdown(
         margin: 1.9rem 0 1.1rem 0;
     }}
     .section-row {{ display: flex; align-items: center; gap: 0.55rem; }}
+    /* 번호 배지와 제목은 섹션마다 같은 색을 쓴다(색은 인라인으로 지정) */
     .section-num {{
         display: inline-flex; align-items: center; justify-content: center;
         width: 1.5rem; height: 1.5rem; flex: 0 0 auto;
-        border-radius: 6px; background: {ACCENT}; color: #fff;
+        border-radius: 6px; color: #fff;
         font-size: 0.82rem; font-weight: 700; line-height: 1;
     }}
     .section-title {{
-        font-size: 1.06rem; font-weight: 700; color: {TEXT_TITLE}; letter-spacing: -0.01em;
+        font-size: 1.06rem; font-weight: 700; letter-spacing: -0.01em;
     }}
     .section-desc {{
         font-size: 0.84rem; color: {TEXT_MUTED}; margin: 0.32rem 0 0 2.05rem;
@@ -168,13 +173,14 @@ if not check_password():
     st.stop()
 
 
-def section_header(num: str, title: str, desc: str) -> None:
+def section_header(num: str, title: str, desc: str, color: str) -> None:
     """섹션 제목. 카드보다 먼저 눈에 들어오도록 위아래 구분선을 두고,
-    포인트 컬러는 이 번호 배지에만 쓴다."""
+    번호 배지와 제목 텍스트는 그 섹션의 색을 함께 쓴다."""
     st.markdown(
         f'<div class="section">'
-        f'<div class="section-row"><span class="section-num">{num}</span>'
-        f'<span class="section-title">{title}</span></div>'
+        f'<div class="section-row">'
+        f'<span class="section-num" style="background:{color}">{num}</span>'
+        f'<span class="section-title" style="color:{color}">{title}</span></div>'
         f'<div class="section-desc">{desc}</div></div>',
         unsafe_allow_html=True,
     )
@@ -241,7 +247,9 @@ with tab_data:
     with col_m:
         target_month = st.number_input("이번 리포트 월", min_value=1, max_value=12, value=7, step=1)
 
-    section_header("1", "입력 파일", "전월 파일과 이번 달 입력 파일을 업로드하세요. ★는 필수입니다.")
+    section_header(
+        "1", "입력 파일", "전월 파일과 이번 달 입력 파일을 업로드하세요. ★는 필수입니다.", SECTION_INPUT
+    )
 
     top_l, top_r = st.columns(2)
     with top_l:
@@ -262,6 +270,7 @@ with tab_data:
     section_header(
         "2", "채널 원본 데이터",
         "채널별 성과 및 광고 데이터를 업로드하세요. 없으면 해당 항목은 '확인 필요'로 비워둡니다.",
+        SECTION_SOURCE,
     )
 
     bot_l, bot_r = st.columns(2)
@@ -315,7 +324,9 @@ with tab_data:
             + ", ".join(optional_missing)
         )
 
-    section_header("3", "취합 실행", "두 처리는 순서와 무관하게 각각 실행할 수 있습니다.")
+    section_header(
+        "3", "취합 실행", "두 처리는 순서와 무관하게 각각 실행할 수 있습니다.", SECTION_RUN
+    )
 
     btn_l, btn_r = st.columns(2)
     with btn_l:
