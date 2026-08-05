@@ -273,15 +273,14 @@ def _build_blog(prev_wb, year, month, publish_rows, blog_rows, log, stat):
 def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_rows, log, stat, plan_fee_matcher=None):
     ws = prev_wb[SHEET_NAMES["유튜브"]]
     if studio_rows is None:
-        log.add("취합/유튜브_Raw Data", "전체", "유튜브 스튜디오 원본이 없어 당월 발행분을 판별할 수 없음")
-        return
-    video_ids = {r.video_id for r in studio_rows}
-    result = filter_youtube_by_video_id(publish_rows, video_ids, "취합/유튜브_Raw Data")
+        log.add("취합/유튜브_Raw Data", "전체", "유튜브 스튜디오 원본이 없어 성과를 채울 수 없음")
+    video_ids = {r.video_id for r in (studio_rows or [])}
+    result = filter_youtube_by_video_id(publish_rows, video_ids, month, "취합/유튜브_Raw Data")
     log.extend(result.confirm)
     accepted = result.accepted
     stat.total_published = len(accepted)
 
-    studio_by_id = {r.video_id: r for r in studio_rows}
+    studio_by_id = {r.video_id: r for r in (studio_rows or [])}
 
     new_rows = []
     for row in accepted:
@@ -289,7 +288,6 @@ def _build_youtube(prev_wb, year, month, publish_rows, studio_rows, campaign_row
         perf = studio_by_id.get(vid)
         if perf is None:
             stat.unmatched_titles.append(row.title)
-            log.add("취합/유튜브_Raw Data", row.title, "video_id는 확인됐지만 스튜디오 원본에서 상세 데이터를 찾지 못해 성과 지표를 비움")
             new_rows.append(
                 {
                     "C": format_kr_date(row.date_raw, year),
@@ -365,16 +363,15 @@ def _build_instagram(prev_wb, year, month, publish_rows, insta_rows, campaign_ro
         perf = matched.get(id(row))
         if perf is not None:
             stat.matched += 1
-        elif insta_rows is not None:
-            # 성과 원본이 있는데도 못 찾으면, 발행리스트에 연도 표기가 없어 섞여 있는
-            # 작년 동월 콘텐츠일 가능성이 높으므로 이번 달 발행분으로 보지 않고 제외한다.
+        else:
+            # 발행리스트에 있는 이번 달 발행건은 성과를 못 찾아도 반드시 행을 추가하고,
+            # 성과 칸만 '확인 필요'로 남긴다.
             stat.unmatched_titles.append(row.title)
-            log.add(
-                "취합/인스타그램_Raw Data", row.title,
-                "발행일이 일치하는 성과 원본을 찾지 못해 이번 달 발행분으로 보지 않고 제외함"
-                "(작년 동월 콘텐츠일 수 있음)",
-            )
-            continue
+            if insta_rows is not None:
+                log.add(
+                    "취합/인스타그램_Raw Data", row.title,
+                    "성과 원본에서 이 콘텐츠를 찾지 못해 성과 지표를 '확인 필요'로 남김",
+                )
 
         fee = _find_campaign_fee(campaign_rows, row)
         if fee is None and plan_fee_matcher is not None:
@@ -435,16 +432,15 @@ def _build_facebook(prev_wb, year, month, publish_rows, fb_rows, log, stat):
         perf = matched.get(id(row))
         if perf is not None:
             stat.matched += 1
-        elif fb_rows is not None:
-            # 성과 원본이 있는데도 못 찾으면, 발행리스트에 연도 표기가 없어 섞여 있는
-            # 작년 동월 콘텐츠일 가능성이 높으므로 이번 달 발행분으로 보지 않고 제외한다.
+        else:
+            # 발행리스트에 있는 이번 달 발행건은 성과를 못 찾아도 반드시 행을 추가하고,
+            # 성과 칸만 '확인 필요'로 남긴다.
             stat.unmatched_titles.append(row.title)
-            log.add(
-                "취합/페이스북_Raw Data", row.title,
-                "발행일이 일치하는 성과 원본을 찾지 못해 이번 달 발행분으로 보지 않고 제외함"
-                "(작년 동월 콘텐츠일 수 있음)",
-            )
-            continue
+            if fb_rows is not None:
+                log.add(
+                    "취합/페이스북_Raw Data", row.title,
+                    "성과 원본에서 이 콘텐츠를 찾지 못해 성과 지표를 '확인 필요'로 남김",
+                )
 
         new_rows.append(
             {
