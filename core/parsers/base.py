@@ -114,8 +114,15 @@ def _sniff_csv_text(file) -> str | None:
 
 
 def _sniff_delimiter(text: str) -> str:
-    first_line = text.splitlines()[0] if text.splitlines() else ""
-    return "\t" if first_line.count("\t") > first_line.count(",") else ","
+    """구분자를 첫 줄만 보고 정하면 안 된다 — 구글애즈 내보내기처럼 첫 두 줄이 제목/기간
+    한 칸짜리라 탭도 콤마도 없는 경우가 있다. 주석(#)과 빈 줄을 빼고 여러 줄을 합쳐서 센다."""
+    lines = [
+        line for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ][:20]
+    tabs = sum(line.count("\t") for line in lines)
+    commas = sum(line.count(",") for line in lines)
+    return "\t" if tabs > commas else ","
 
 
 def load_any_tabular(file) -> list[tuple[str, list[list]]]:
@@ -153,15 +160,23 @@ def to_number(v):
         return None
 
 
-def find_table_with_header(file, required: list[str], max_scan: int = 10):
+def find_table_with_header(file, required: list[str], max_scan: int = 10, prefer_sheet: str | None = None):
     """xlsx/csv 어느 쪽이든 열어서, required 열 이름이 모두 들어있는 헤더 행을 찾는다.
-    (헤더 행, 그 아래 데이터 행들)을 반환한다."""
-    for _, rows in load_any_tabular(file):
+    (헤더 행, 그 아래 데이터 행들)을 반환한다.
+    prefer_sheet(소문자 부분 문자열)를 주면 그 시트를 우선 고른다."""
+    fallback = (None, None)
+    for sheet_name, rows in load_any_tabular(file):
         for i, row in enumerate(rows[:max_scan]):
             texts = {str(c).strip() for c in row if c is not None}
-            if set(required) <= texts:
-                return row, rows[i + 1 :]
-    return None, None
+            if not (set(required) <= texts):
+                continue
+            found = (row, rows[i + 1 :])
+            if prefer_sheet and prefer_sheet in str(sheet_name).lower():
+                return found
+            if fallback == (None, None):
+                fallback = found
+            break
+    return fallback
 
 
 def find_sheet_by_pattern(file, name_regex: str) -> str:

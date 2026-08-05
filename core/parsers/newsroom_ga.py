@@ -14,7 +14,11 @@ from .base import ParseError, find_column, load_any_tabular
 PATH_ID_RE = re.compile(r"^/?\d+/?$")
 
 VIEW_CANDIDATES = ["조회수", "페이지뷰", "PV", "조회 수"]
-URL_OR_TITLE_CANDIDATES = ["URL", "콘텐츠 URL", "페이지", "제목", "콘텐츠명", "콘텐츠 주제"]
+URL_OR_TITLE_CANDIDATES = [
+    "페이지 경로 및 화면 클래스",  # GA4 내보내기 원본의 열 이름
+    "페이지 경로",
+    "URL", "콘텐츠 URL", "페이지", "제목", "콘텐츠명", "콘텐츠 주제",
+]
 
 
 @dataclass
@@ -33,6 +37,18 @@ def _to_num(v):
         return float(str(v).replace(",", "").strip())
     except ValueError:
         return None
+
+
+def _strip_comment_rows(rows: list[list]) -> list[list]:
+    """GA4 내보내기 csv는 맨 위에 '# ----', '# news.lxsemicon.com - GA4' 같은 주석 줄이
+    붙어 나온다. 이 줄들이 섞여 있으면 열 판별 비율 계산이 틀어지므로 먼저 걷어낸다."""
+    out = []
+    for r in rows:
+        first = str(r[0]).strip() if r and r[0] is not None else ""
+        if first.startswith("#"):
+            continue
+        out.append(r)
+    return out
 
 
 def _find_path_id_columns(rows: list[list]) -> tuple[int, int] | None:
@@ -68,7 +84,7 @@ def _find_path_id_columns(rows: list[list]) -> tuple[int, int] | None:
 def parse_newsroom_ga(file) -> list[NewsroomGaRow]:
     tables = load_any_tabular(file)
     for _, rows in tables:
-        rows = rows[:500]
+        rows = _strip_comment_rows(rows)[:500]
         for i, row in enumerate(rows[:10]):
             header = row
             key_col = find_column(header, URL_OR_TITLE_CANDIDATES)
@@ -82,7 +98,8 @@ def parse_newsroom_ga(file) -> list[NewsroomGaRow]:
                     continue
                 key = r[key_col]
                 views = _to_num(r[view_col])
-                if key is None or views is None:
+                # GA4 원본의 '총 합계' 행은 경로 칸이 비어 있으므로 함께 걸러진다.
+                if key is None or not str(key).strip() or views is None:
                     continue
                 out.append(NewsroomGaRow(key=str(key).strip(), views=views))
             if out:

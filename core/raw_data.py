@@ -614,6 +614,31 @@ def match_perf_rows(
             used.add(id(cand))
             result[id(row)] = cand
 
+    # 5단계: 제목을 아예 비교할 수 없는 원본일 때의 마지막 수단.
+    # 플랫폼에서 바로 받은 페이스북/인스타그램 원본은 제목 칸에 캡션이 들어 있고 링크 형태도
+    # 발행리스트와 달라(share/p/... vs posts/pfbid...) 링크·제목이 모두 무용지물이다.
+    # 이때는 발행일이 같고 후보가 하나뿐인 경우에만 배정하되, 발행리스트에 연도 표기가 없어
+    # 작년 동월 행이 앞쪽에 섞여 있으므로 '나중에 추가된 행'부터(역순) 가져가게 한다.
+    for row in reversed(publish_rows):
+        if id(row) in result:
+            continue
+        center = center_of(row)
+        if center is None:
+            continue
+        for delta in (0, -1, 1):
+            candidates = [
+                c for c in by_date.get(center + datetime.timedelta(days=delta), [])
+                if id(c) not in used
+            ]
+            if len(candidates) == 1:
+                used.add(id(candidates[0]))
+                result[id(row)] = candidates[0]
+                log.add(
+                    area, row.title,
+                    "성과 원본에 비교할 제목·링크가 없어 발행일만으로 매칭했습니다 — 맞는지 확인해주세요",
+                )
+                break
+
     return result
 
 
