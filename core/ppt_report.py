@@ -283,11 +283,18 @@ RAW_SHEET = {
 }
 
 
-def build_ppt_report(prev_ppt: Presentation, raw_wb, ad_wb, target_year: int, target_month: int) -> PptReportResult:
+def build_ppt_report(
+    prev_ppt: Presentation, raw_wb, ad_wb, target_year: int, target_month: int, summary_inputs=None
+) -> PptReportResult:
+    """summary_inputs(core.summary_slides.SummaryInputs)를 주면 5P KPI·6P 전월 비교도 채운다."""
     log = ConfirmLog()
     rec = _Recorder(log)
     slides = prev_ppt.slides
 
+    if summary_inputs is not None:
+        from .summary_slides import fill_summary_slides
+
+        fill_summary_slides(prev_ppt, summary_inputs, target_year, target_month, rec)
     _fill_inflow_tables(slides, raw_wb, target_month, rec)
     _fill_newsroom(slides, raw_wb, rec)
     _fill_youtube(slides, raw_wb, ad_wb, rec)
@@ -300,7 +307,7 @@ def build_ppt_report(prev_ppt: Presentation, raw_wb, ad_wb, target_year: int, ta
     rec.todo(
         None, "공통", "차트·수기 데이터 슬라이드",
         "네이티브 차트/성별·연령/트래픽소스/키워드 등은 전월 내용 그대로",
-        "KPI 3개월 추이 표, 네이티브 차트(구독자 추이, 성별/연령 등), 방문유형·체류시간·"
+        "네이티브 차트(채널별 구독자 추이, 성별/연령 등), 방문유형·체류시간·"
         "트래픽소스·키워드 등 스크린샷 기반 수기 데이터는 자동 채움 대상이 아닙니다. "
         "전월 내용이 그대로 남아있으니 슬라이드를 열어 직접 교체해주세요.",
     )

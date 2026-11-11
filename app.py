@@ -12,6 +12,7 @@
 from io import BytesIO
 
 import openpyxl
+import pandas as pd
 import streamlit as st
 from pptx import Presentation
 
@@ -30,6 +31,15 @@ from core.parsers.publish_list import parse_publish_list
 from core.parsers.youtube_studio import parse_youtube_studio
 from core.ppt_report import build_ppt_report
 from core.raw_data import SHEET_NAMES, build_raw_data
+from core.summary_slides import (
+    CHANNELS as SUMMARY_CHANNELS,
+    COMPARE_ROWS,
+    KPI_RATE_LABEL,
+    SummaryInputs,
+    auto_summary_values,
+    default_inputs,
+    read_summary_template,
+)
 
 st.set_page_config(page_title="LX세미콘 월간 리포트 취합 프로그램", page_icon="📊", layout="wide")
 
@@ -55,6 +65,7 @@ CARD_SECTION = {
     "card_ppt_prev": SECTION_INPUT,
     "card_ppt_raw": SECTION_SOURCE,
     "card_ppt_ad": SECTION_SOURCE,
+    "card_ppt_summary": SECTION_SOURCE,
 }
 CARD_KEYS = list(CARD_SECTION)
 _card_selectors = ", ".join(f".st-key-{k}" for k in CARD_KEYS)
@@ -240,6 +251,23 @@ def card_title(text: str, desc: str | None = None) -> None:
         + (f'<div class="card-desc">{desc}</div>' if desc else ""),
         unsafe_allow_html=True,
     )
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def summary_defaults(ppt_bytes: bytes, raw_bytes: bytes | None, year: int, month: int) -> dict:
+    """5P·6P 입력 표의 기본값. 파일·월이 같으면 rerun마다 다시 읽지 않도록 캐시한다."""
+    t = read_summary_template(Presentation(BytesIO(ppt_bytes)))
+    raw_wb = openpyxl.load_workbook(BytesIO(raw_bytes), data_only=True) if raw_bytes else None
+    auto = auto_summary_values(raw_wb, month)
+    return {
+        "inputs": default_inputs(t, auto, year, month),
+        "found": (t.found_kpi, t.found_trend, t.found_compare),
+    }
+
+
+def _cell(v):
+    """data_editor 셀 값 -> float/None (빈칸은 NaN으로 온다)."""
+    return None if v is None or pd.isna(v) else float(v)
 
 
 def render_result(out: dict) -> None:
@@ -614,16 +642,117 @@ with tab_ppt:
         st.info("AD 최종본이 없으면 캠페인 운영 요약 표와 유튜브 '캠페인/조회수'·'캠페인비'가 비워집니다.")
 
     st.caption(
-        "⚠ 표 데이터(유입데이터 분석 · 콘텐츠 운영 내역 · 캠페인 운영 요약)만 자동으로 채웁니다. "
-        "KPI 3개월 추이 표, 네이티브 차트, 스크린샷 기반 수기 데이터(방문유형·체류시간·성별연령·"
+        "⚠ 표 데이터(Summary 5P·6P · 유입데이터 분석 · 콘텐츠 운영 내역 · 캠페인 운영 요약)를 채웁니다. "
+        "채널 슬라이드의 네이티브 차트, 스크린샷 기반 수기 데이터(방문유형·체류시간·성별연령·"
         "키워드 등)는 전월 내용이 그대로 남아있으니 직접 교체해야 합니다."
     )
 
-    section_header("3", "PPT 생성", "채운 내역과 확인 필요 항목을 확인한 뒤 내려받으세요.", SECTION_RUN)
+    # ── 3. Summary(5P KPI · 6P 전월 비교) 값 입력 ─────────────────────────────
+    section_header(
+        "3", "Summary 값 입력 (5P · 6P)",
+        "전월 PPT와 로우데이터로 미리 채운 값입니다. 표를 직접 고치면 그대로 PPT에 반영됩니다. "
+        "증감·증감율·달성률은 입력값으로 자동 계산합니다.",
+        SECTION_SOURCE,
+    )
+    summary_inputs = None
+    with st.container(key="card_ppt_summary"):
+        if ppt_prev_file is None:
+            card_title("5P KPI 달성률 · 구독자 추이 / 6P 운영 요약(전월 비교)")
+            st.info("전월 PPT를 올리면 입력 표가 나타납니다. 로우데이터(취합)도 올리면 이번 달 값이 자동으로 채워집니다.")
+        else:
+            y, m = int(ppt_target_year), int(ppt_target_month)
+            prev_m = 12 if m == 1 else m - 1
+            try:
+                sd = summary_defaults(
+                    ppt_prev_file.getvalue(),
+                    ppt_raw_file.getvalue() if ppt_raw_file is not None else None,
+                    y, m,
+                )
+            except Exception as e:
+                sd = None
+                st.warning(f"5P·6P 기본값을 만드는 중 오류가 발생해 이 부분은 건너뜁니다: {e}")
+
+            if sd is not None and not any(sd["found"]):
+                st.info("전월 PPT에서 5P(KPI 달성률)·6P(운영 요약) 표를 찾지 못해 이 부분은 건너뜁니다.")
+            elif sd is not None:
+                d: SummaryInputs = sd["inputs"]
+                # 파일·월이 바뀌면 편집 상태를 새로 시작하도록 키에 서명을 넣는다
+                sig = f"{getattr(ppt_prev_file, 'file_id', ppt_prev_file.name)}_{getattr(ppt_raw_file, 'file_id', '')}_{y}_{m}"
+                use_summary = st.checkbox("5P · 6P도 PPT에 채우기", value=True, key="use_summary")
+                if ppt_raw_file is None:
+                    st.caption("ℹ 로우데이터(취합)를 아직 올리지 않아 이번 달 값이 비어 있습니다. 올리면 자동으로 채워집니다.")
+
+                num_cfg = st.column_config.NumberColumn(format="localized", step=1)
+                rate_cfg = st.column_config.NumberColumn(format="%.2f", step=0.01)
+
+                # 5P ① KPI 달성률
+                card_title("5P · KPI 달성률", f"평균조회율은 % 숫자로 입력(예: 52.62). 달성률 = {m}월 기준 누적 ÷ 26년 KPI")
+                kpi_labels = list(d.kpi_target.keys())
+                kpi_df = pd.DataFrame(
+                    [d.kpi_target, d.kpi_cum], index=["26년 KPI", f"{m}월 기준 누적"], columns=kpi_labels
+                ).astype("float")
+                kpi_edit = st.data_editor(
+                    kpi_df, key=f"sum_kpi_{sig}", width="stretch",
+                    column_config={k: (rate_cfg if k == KPI_RATE_LABEL else num_cfg) for k in kpi_labels},
+                )
+                if pd.isna(d.kpi_cum.get(KPI_RATE_LABEL)):
+                    st.caption(f"⚠ '{KPI_RATE_LABEL}'은 쇼츠·시흥캠·보도자료 제외 누적 수기 집계값이라 직접 입력해야 합니다.")
+
+                # 5P ② 채널별 구독자 추이(최근 3개월)
+                card_title(
+                    "5P · SNS 채널별 월 구독자 추이 (최근 3개월)",
+                    "뉴스룸은 구글 세션수(방문횟수), 나머지는 구독자/팔로워 수. 표와 막대 차트에 함께 반영됩니다.",
+                )
+                trend_df = pd.DataFrame(d.trend_values, index=d.trend_labels, columns=SUMMARY_CHANNELS).astype("float")
+                trend_edit = st.data_editor(
+                    trend_df, key=f"sum_trend_{sig}", width="stretch",
+                    column_config={c: num_cfg for c in SUMMARY_CHANNELS},
+                )
+
+                # 6P 운영 요약(전월 비교)
+                card_title(
+                    f"6P · 운영 요약 (전월 비교: {prev_m}월 → {m}월)",
+                    "평균 조회율은 유튜브만 입력(% 숫자). 당월 칸을 비워두면 5P에 입력한 평균조회율을 그대로 씁니다.",
+                )
+                cmp_cols = [f"{ch} {mm}월" for ch in SUMMARY_CHANNELS for mm in (prev_m, m)]
+                cmp_rows = []
+                for row in COMPARE_ROWS:
+                    vals = []
+                    for ch in SUMMARY_CHANNELS:
+                        p, c = d.compare[row][ch]
+                        vals += [p, c]
+                    cmp_rows.append(vals)
+                cmp_df = pd.DataFrame(cmp_rows, index=COMPARE_ROWS, columns=cmp_cols).astype("float")
+                cmp_edit = st.data_editor(
+                    cmp_df, key=f"sum_cmp_{sig}", width="stretch",
+                    column_config={c: num_cfg for c in cmp_cols},
+                )
+
+                if use_summary:
+                    summary_inputs = SummaryInputs(
+                        kpi_target={k: _cell(kpi_edit.iloc[0][k]) for k in kpi_labels},
+                        kpi_cum={k: _cell(kpi_edit.iloc[1][k]) for k in kpi_labels},
+                        trend_labels=list(d.trend_labels),
+                        trend_values=[
+                            {ch: _cell(trend_edit.iloc[i][ch]) for ch in SUMMARY_CHANNELS} for i in range(len(d.trend_labels))
+                        ],
+                        trend_base=d.trend_base,
+                        compare={
+                            row: {
+                                ch: (_cell(cmp_edit.loc[row, f"{ch} {prev_m}월"]), _cell(cmp_edit.loc[row, f"{ch} {m}월"]))
+                                for ch in SUMMARY_CHANNELS
+                            }
+                            for row in COMPARE_ROWS
+                        },
+                    )
+        st.markdown('<div class="panel-gap"></div>', unsafe_allow_html=True)
+
+    section_header("4", "PPT 생성", "채운 내역과 확인 필요 항목을 확인한 뒤 내려받으세요.", SECTION_RUN)
     st.markdown(
         '<div class="ppt-scope">채널별(뉴스룸 · 유튜브 · 인스타그램 · 페이스북 · 블로그)로 '
-        '아래 세 가지 표를 PPT에 입력합니다.'
+        '아래 표를 PPT에 입력합니다.'
         '<ol>'
+        '<li>Summary &gt; 5P KPI 달성률·구독자 추이(표+차트), 6P 운영 요약(전월 비교) — 위 3번에서 입력한 값</li>'
         '<li>운영 개요 &gt; 유입데이터 분석 표 — 전월/당월 값과 전월 대비 증감률</li>'
         '<li>콘텐츠 운영 내역 표 — 콘텐츠 제목에 발행 URL 하이퍼링크 포함</li>'
         '<li>캠페인 운영 개요 &gt; 캠페인 운영 요약 표 — 유튜브 동영상조회, 인스타 참여·도달·동영상조회</li>'
@@ -670,6 +799,7 @@ with tab_ppt:
             ppt_result = build_ppt_report(
                 prev_ppt=prev_ppt, raw_wb=ppt_raw_wb, ad_wb=ppt_ad_wb,
                 target_year=int(ppt_target_year), target_month=int(ppt_target_month),
+                summary_inputs=summary_inputs,
             )
         except Exception as e:
             st.error(f"처리 중 오류가 발생했습니다: {e}")
